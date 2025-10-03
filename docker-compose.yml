@@ -1,10 +1,14 @@
 services:
   mcp_polygon:
+    image: mcp_polygon
     build: .
     volumes:
       - .:/app
     container_name: mcp_polygon_server
+    network_mode: host
     environment:
       - POLYGON_API_KEY=${POLYGON_API_KEY}
-    stdin_open: true
-    tty: true
+      - MCP_TRANSPORT=sse
+    entrypoint: []
+    command: bash -c 'cd /app && uv run python run_server_host.py'
+    restart: unless-stopped

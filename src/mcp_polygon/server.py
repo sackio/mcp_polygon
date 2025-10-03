@@ -2057,3 +2057,12 @@ async def get_futures_snapshot(
 def run(transport: Literal["stdio", "sse", "streamable-http"] = "stdio") -> None:
     """Run the Polygon MCP server."""
     poly_mcp.run(transport)
+
+
+def get_asgi_app(transport: Literal["sse", "streamable-http"] = "sse"):
+    """Get the ASGI app for manual uvicorn deployment."""
+    # Use FastMCP's built-in ASGI app
+    if transport == "sse":
+        return poly_mcp.sse_app()
+    else:
+        return poly_mcp.streamable_http_app()
