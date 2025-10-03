@@ -2050,6 +2050,138 @@ async def get_futures_snapshot(
         return {"error": str(e)}
 
 
+# Flat Files Tools
+from . import flatfiles
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_flatfile_asset_classes() -> Dict[str, Any]:
+    """
+    List available flat file asset classes (us_stocks_sip, us_options_opra, etc.).
+    """
+    try:
+        return {
+            "asset_classes": flatfiles.ASSET_CLASSES,
+            "available_prefixes": flatfiles.list_prefixes(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_flatfile_data_types(asset_class: str) -> Dict[str, Any]:
+    """
+    List available data types for a specific asset class.
+    """
+    try:
+        prefixes = flatfiles.list_prefixes(f"{asset_class}/")
+        data_types = {}
+        for prefix in prefixes:
+            data_type = prefix.replace(f"{asset_class}/", "").rstrip("/")
+            data_types[data_type] = flatfiles.DATA_TYPES.get(data_type, data_type)
+
+        return {
+            "asset_class": asset_class,
+            "data_types": data_types,
+            "prefixes": prefixes,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_flatfiles(
+    asset_class: str,
+    data_type: str,
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    max_results: int = 100,
+) -> Dict[str, Any]:
+    """
+    List flat files for a specific asset class and data type.
+    Shows which files are already cached locally.
+    """
+    try:
+        prefix = f"{asset_class}/{data_type}/"
+
+        if year:
+            prefix += f"{year}/"
+            if month:
+                prefix += f"{month:02d}/"
+
+        files = flatfiles.list_files(prefix, max_results)
+
+        return {
+            "asset_class": asset_class,
+            "data_type": data_type,
+            "prefix": prefix,
+            "file_count": len(files),
+            "files": files,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_flatfile_info(s3_key: str) -> Dict[str, Any]:
+    """
+    Get metadata about a specific flat file, including cache status.
+    """
+    try:
+        return flatfiles.get_file_info(s3_key)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool()
+async def download_flatfile(s3_key: str, force: bool = False) -> Dict[str, Any]:
+    """
+    Download a flat file from S3 to local cache.
+    If already cached, returns the cached path unless force=True.
+    """
+    try:
+        return flatfiles.download_file(s3_key, force)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_flatfile_dates(
+    asset_class: str,
+    data_type: str,
+    year: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    List available dates for a specific asset class and data type.
+    """
+    try:
+        dates = flatfiles.list_available_dates(asset_class, data_type, year)
+        return {
+            "asset_class": asset_class,
+            "data_type": data_type,
+            "year": year,
+            "available_dates": dates,
+            "count": len(dates),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool()
+async def clear_flatfile_cache(asset_class: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Clear cached flat files. Optionally specify asset_class to only clear that class.
+    """
+    try:
+        result = flatfiles.clear_cache(asset_class)
+        return {
+            "asset_class": asset_class or "all",
+            **result,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Directly expose the MCP server object
 # It will be run from entrypoint.py
 
