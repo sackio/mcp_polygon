@@ -61,6 +61,15 @@ in this repo's `.env`, from k8s secret `mongodb-credentials` in namespace
 read-only (find/count only) and rejects server-side-JS filter operators
 (`$where`/`$function`/`$accumulator`/`$expr`).
 
+⚠️ **Not covered by the corpus tools above — raw-only lanes, no sorted form:**
+`us_options_opra/{day_aggs_v1,minute_aggs_v1,trades_v1}` and `us_indices/day_aggs_v1`,
+all stopped 2026-06-02, live only under RAW at `/mnt/store/zpolygon/...` (s5-local, and
+raw uses `YYYY-MM-DD.parquet` filenames vs. sorted's `MM/DD.parquet` — different shape,
+not just a different root). `/mnt/store` **is** NFS-exported from server5 (correcting an
+earlier note in this file) but each host mounts it under its own local name, so there's
+no single absolute path a tool could return fleet-wide. Not built; ask quantum-data
+before adding raw-lane support.
+
 ## What you own
 
 | | |
