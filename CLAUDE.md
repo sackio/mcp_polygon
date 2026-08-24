@@ -23,6 +23,32 @@ backend, same auth, same keys. The rename is cosmetic.**
 treat them as two systems, and never tell anyone one is deprecated in favour of the other.**
 Old code, old memos and old env vars all say `POLYGON_*`; that is correct and current.
 
+## Fork migrated to upstream's tool set — 2026-08-24, additive, nothing removed
+
+Package renamed `src/mcp_polygon` → `src/mcp_massive`. Upstream (`massive-com/mcp_massive`,
+tracked as git remote `upstream`) did a full rewrite since we forked: 53 individual tools
+collapsed into 3 generic ones (`search_endpoints`, `call_api`, `query_data` — a REST proxy
+driven by Massive's own doc index, with an in-memory SQLite table store for multi-step SQL).
+On Ben's instruction, that new set was added **alongside**, not instead of, every existing
+tool — all ~65 explicit per-endpoint tools plus this fork's own flatfiles/docs/corpus/refdata
+additions are still registered on the same FastMCP instance. **73 tools total.** `MASSIVE_API_KEY`
+is now preferred; `POLYGON_API_KEY` still works as a fallback.
+
+⛔ **`streamable_http_path` is pinned explicitly to `"/mcp/v1"`** in the `FastMCP(...)` call in
+`server.py`. The mcp SDK bump this migration required (1.9.3 → 1.29.1 — mcp 2.x broke the
+`mcp.server.fastmcp` import entirely) silently changed that library's *default* mount path from
+`/mcp/v1` to `/mcp`. Every seat on the fleet is configured against
+`http://server4:24400/mcp/v1` — **never let this setting get "cleaned up"**, it would 404 every
+consumer on the next SDK bump.
+
+⚠️ `requires-python` is now `>=3.12` — upstream's `store.py` uses PEP 701 relaxed f-string
+grammar. `certifi` is pinned to `>=2022.5.18,<2026.0.0` (not upstream's `>=2026.2.25`) because
+`polygon-api-client` caps it below 2026 — that floor wasn't load-bearing for anything used here.
+
+As of this migration we are 8 fork-local commits ahead / 59 upstream commits behind (check
+`git log --oneline upstream/master..HEAD` and the reverse) — upstream is a live, actively
+developed project, not a snapshot. Re-check before assuming this section is current.
+
 ---
 
 ## Massive's docs — llms.txt
@@ -30,7 +56,7 @@ Old code, old memos and old env vars all say `POLYGON_*`; that is correct and cu
 **https://massive.com/docs/llms.txt** is Massive's own doc index for LLM consumption — every
 entry links to a `.md` URL that returns raw markdown (no HTML scraping needed). Added
 2026-08-24: `list_massive_docs` (search/filter the index), `list_massive_doc_sections`, and
-`get_massive_doc` (fetch one page by URL or relative path) in `src/mcp_polygon/docs.py`, so
+`get_massive_doc` (fetch one page by URL or relative path) in `src/mcp_massive/docs.py`, so
 any agent can look up REST/flat-file/websocket endpoint docs without leaving the MCP session.
 
 ## Quantum-data's corpus + ref-data — read-only, added 2026-08-24
@@ -38,7 +64,7 @@ any agent can look up REST/flat-file/websocket endpoint docs without leaving the
 Two more tool groups, both reaching **quantum-data's** stuff (not Massive's) — coordinate
 with quantum-data before changing scope, per "you own the supply, not the consumers."
 
-**Corpus** (`src/mcp_polygon/corpus.py`): `list_corpus_lanes`, `resolve_corpus_path`,
+**Corpus** (`src/mcp_massive/corpus.py`): `list_corpus_lanes`, `resolve_corpus_path`,
 `get_corpus_file_info`, `read_corpus_rows`. Reads quantum-data's sorted per-day parquet
 corpus at `/mnt/nas/data/quantum/replay/ts-sorted` (8 lanes, 38,410 lane-days) — a
 **different** corpus from the Massive S3 flatfile tools above. Path construction is
@@ -50,7 +76,7 @@ before touching this file's tool surface — schema/unit gotchas are documented 
 docker-compose mounts `/mnt/nas/data/quantum` and quantum-feed's `tools/data` read-only
 at matching absolute paths so imports and returned paths need no translation.
 
-**Ref-data** (`src/mcp_polygon/refdata.py`): `list_ref_collections`,
+**Ref-data** (`src/mcp_massive/refdata.py`): `list_ref_collections`,
 `get_ref_collection_info`, `query_ref_collection`. Read-only MongoDB access to db
 `qf_feed` (192.168.1.42:27017), **whitelisted to 6 collections only** (tickers, ETF
 constituents, market caps, classification, ticker details, trade conditions) —
