@@ -8,6 +8,11 @@ services:
     network_mode: host
     environment:
       - POLYGON_API_KEY=${POLYGON_API_KEY}
+      - POLYGON_S3_ACCESS_KEY=${POLYGON_S3_ACCESS_KEY}
+      - POLYGON_S3_SECRET_KEY=${POLYGON_S3_SECRET_KEY}
+      - POLYGON_S3_ENDPOINT=${POLYGON_S3_ENDPOINT}
+      - POLYGON_S3_BUCKET=${POLYGON_S3_BUCKET}
+      - POLYGON_FLATFILES_CACHE_DIR=/app/.cache/flatfiles
       - MCP_TRANSPORT=sse
     entrypoint: []
     command: bash -c 'cd /app && uv run python run_server_host.py'

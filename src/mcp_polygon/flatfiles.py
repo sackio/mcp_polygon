@@ -8,10 +8,6 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-# S3 Configuration
-S3_ENDPOINT = "https://files.polygon.io"
-S3_BUCKET = "flatfiles"
-
 # Available prefixes (asset classes)
 ASSET_CLASSES = {
     "us_stocks_sip": "US Stocks (SIP)",
@@ -30,13 +26,23 @@ DATA_TYPES = {
 }
 
 
+def _require_env(name: str) -> str:
+    value = os.environ.get(name, "")
+    if not value:
+        raise ValueError(f"{name} not configured in environment")
+    return value
+
+
+def get_s3_bucket() -> str:
+    """Return the configured flat files S3 bucket name."""
+    return _require_env("POLYGON_S3_BUCKET")
+
+
 def get_s3_client():
     """Initialize and return S3 client for Polygon flat files."""
-    access_key = os.environ.get("POLYGON_FLATFILES_ACCESS_KEY", "")
-    secret_key = os.environ.get("POLYGON_FLATFILES_SECRET_KEY", "")
-
-    if not access_key or not secret_key:
-        raise ValueError("Flat files credentials not configured in environment")
+    access_key = _require_env("POLYGON_S3_ACCESS_KEY")
+    secret_key = _require_env("POLYGON_S3_SECRET_KEY")
+    endpoint = _require_env("POLYGON_S3_ENDPOINT")
 
     session = boto3.Session(
         aws_access_key_id=access_key,
@@ -45,14 +51,14 @@ def get_s3_client():
 
     return session.client(
         's3',
-        endpoint_url=S3_ENDPOINT,
+        endpoint_url=endpoint,
         config=Config(signature_version='s3v4'),
     )
 
 
 def get_cache_dir() -> Path:
     """Get the cache directory path, creating it if necessary."""
-    cache_dir = Path(os.environ.get("POLYGON_FLATFILES_CACHE_DIR", "/tmp/polygon_flatfiles"))
+    cache_dir = Path(os.environ.get("POLYGON_FLATFILES_CACHE_DIR", "/app/.cache/flatfiles"))
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 
@@ -89,11 +95,12 @@ def get_cache_info(s3_key: str) -> Optional[Dict[str, Any]]:
 def list_prefixes(prefix: str = "") -> List[str]:
     """List available prefixes (directories) in S3."""
     s3 = get_s3_client()
+    bucket = get_s3_bucket()
 
     paginator = s3.get_paginator('list_objects_v2')
     prefixes = set()
 
-    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix, Delimiter='/'):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter='/'):
         if 'CommonPrefixes' in page:
             for cp in page['CommonPrefixes']:
                 prefixes.add(cp['Prefix'])
@@ -104,11 +111,12 @@ def list_prefixes(prefix: str = "") -> List[str]:
 def list_files(prefix: str, max_results: int = 100) -> List[Dict[str, Any]]:
     """List files in a specific prefix with caching info."""
     s3 = get_s3_client()
+    bucket = get_s3_bucket()
 
     paginator = s3.get_paginator('list_objects_v2')
     files = []
 
-    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix, PaginationConfig={'MaxItems': max_results}):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, PaginationConfig={'MaxItems': max_results}):
         if 'Contents' in page:
             for obj in page['Contents']:
                 key = obj['Key']
@@ -147,14 +155,15 @@ def download_file(s3_key: str, force: bool = False) -> Dict[str, Any]:
 
     # Download from S3
     s3 = get_s3_client()
+    bucket = get_s3_bucket()
 
     try:
         # Get file size first
-        response = s3.head_object(Bucket=S3_BUCKET, Key=s3_key)
+        response = s3.head_object(Bucket=bucket, Key=s3_key)
         file_size_mb = round(response['ContentLength'] / 1024 / 1024, 2)
 
         # Download file
-        s3.download_file(S3_BUCKET, s3_key, str(cache_path))
+        s3.download_file(bucket, s3_key, str(cache_path))
 
         return {
             "status": "downloaded",
@@ -172,9 +181,10 @@ def download_file(s3_key: str, force: bool = False) -> Dict[str, Any]:
 def get_file_info(s3_key: str) -> Dict[str, Any]:
     """Get metadata about a specific S3 file."""
     s3 = get_s3_client()
+    bucket = get_s3_bucket()
 
     try:
-        response = s3.head_object(Bucket=S3_BUCKET, Key=s3_key)
+        response = s3.head_object(Bucket=bucket, Key=s3_key)
 
         info = {
             "key": s3_key,
@@ -207,11 +217,12 @@ def list_available_dates(asset_class: str, data_type: str, year: Optional[int] =
         prefix += f"{year}/"
 
     s3 = get_s3_client()
+    bucket = get_s3_bucket()
     paginator = s3.get_paginator('list_objects_v2')
 
     dates = set()
 
-    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=prefix):
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
         if 'Contents' in page:
             for obj in page['Contents']:
                 key = obj['Key']
