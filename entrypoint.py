@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import os
 from typing import Literal
-from mcp_polygon import server
+from mcp_massive import server
 
 
 def transport() -> Literal["stdio", "sse", "streamable-http"]:
@@ -23,11 +23,11 @@ def transport() -> Literal["stdio", "sse", "streamable-http"]:
 
 # Ensure the server process doesn't exit immediately when run as an MCP server
 def start_server():
-    polygon_api_key = os.environ.get("POLYGON_API_KEY", "")
-    if not polygon_api_key:
-        print("Warning: POLYGON_API_KEY environment variable not set.")
+    api_key = os.environ.get("MASSIVE_API_KEY", "") or os.environ.get("POLYGON_API_KEY", "")
+    if not api_key:
+        print("Warning: MASSIVE_API_KEY (or legacy POLYGON_API_KEY) environment variable not set.")
     else:
-        print("Starting Polygon MCP server with API key configured.")
+        print("Starting Massive MCP server with API key configured.")
 
     server.run(transport=transport())
 

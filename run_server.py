@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the MCP Polygon server with SSE transport on 0.0.0.0:8000."""
 import os
-from mcp_polygon.server import poly_mcp
+from mcp_massive.server import poly_mcp
 
 if __name__ == "__main__":
     polygon_api_key = os.environ.get("POLYGON_API_KEY", "")

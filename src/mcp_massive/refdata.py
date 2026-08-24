@@ -42,7 +42,7 @@ def _get_client():
         uri = os.environ.get("QF_MONGO_URI", "")
         if not uri:
             raise ValueError("QF_MONGO_URI not configured in environment")
-        _client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=5000, appname="mcp_polygon/refdata")
+        _client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=5000, appname="mcp_massive/refdata")
     return _client
 
 

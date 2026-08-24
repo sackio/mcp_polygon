@@ -5,7 +5,7 @@ services:
     volumes:
       - .:/app
       # Read-only: quantum-data's sorted flatfile corpus, and its canonical path
-      # builder (qfdata.paths) so mcp_polygon/corpus.py imports the real thing
+      # builder (qfdata.paths) so mcp_massive/corpus.py imports the real thing
       # instead of re-implementing the path shape. Same absolute path in and out
       # of the container so paths returned to callers are directly usable.
       - /mnt/nas/data/quantum:/mnt/nas/data/quantum:ro
@@ -13,6 +13,9 @@ services:
     container_name: mcp_polygon_server
     network_mode: host
     environment:
+      # MASSIVE_API_KEY is the current name; falls back to POLYGON_API_KEY in
+      # code if unset, so this repo's .env doesn't need to change today.
+      - MASSIVE_API_KEY=${MASSIVE_API_KEY}
       - POLYGON_API_KEY=${POLYGON_API_KEY}
       - POLYGON_S3_ACCESS_KEY=${POLYGON_S3_ACCESS_KEY}
       - POLYGON_S3_SECRET_KEY=${POLYGON_S3_SECRET_KEY}

@@ -1,19 +1,28 @@
 [project]
-name = "mcp_polygon"
-version = "0.4.1"
+name = "mcp_massive"
+version = "0.5.0"
 description = "A MCP server project"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 dependencies = [
-    "mcp[cli]>=1.9.3",
+    # mcp 2.x restructured mcp.server.fastmcp (broke this import); upstream itself
+    # is pinned to 1.27.0. Stay in the 1.x line until that's re-verified.
+    "mcp[cli]>=1.27.0,<2.0.0",
     "polygon-api-client>=1.15.3",
     "boto3>=1.35.0",
     "pyarrow>=17.0.0",
     "pymongo>=4.6.0",
+    # polygon-api-client (old tool set) pins certifi<2026.0.0; upstream mcp_massive
+    # wants >=2026.2.25 but that floor isn't load-bearing for anything we use here.
+    "certifi>=2022.5.18,<2026.0.0",
+    "httpx>=0.28.1",
+    "numpy>=2.4.4",
+    "pydantic>=2.12.5",
+    "sqlglot>=30.4.0",
 ]
 [[project.authors]]
-name = "Polygon"
-email = "support@polygon.io"
+name = "Massive"
+email = "support@massive.com"
 
 [build-system]
 requires = [ "hatchling",]
@@ -25,4 +34,4 @@ dev = [
 ]
 
 [project.scripts]
-mcp_polygon = "mcp_polygon:run"
+mcp_massive = "mcp_massive:run"

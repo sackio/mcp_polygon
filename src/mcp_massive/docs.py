@@ -14,7 +14,7 @@ from urllib.parse import urljoin
 DOCS_BASE = "https://massive.com/docs/"
 LLMS_INDEX_URL = urljoin(DOCS_BASE, "llms.txt")
 
-_USER_AGENT = "mcp_polygon/docs-tool"
+_USER_AGENT = "mcp_massive/docs-tool"
 _TIMEOUT_SECONDS = 15
 
 # Cached in-process; the index is small (tens of KB) and changes rarely.
