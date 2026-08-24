@@ -12,6 +12,7 @@ import certifi
 import httpx
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from polygon import RESTClient
@@ -52,6 +53,21 @@ poly_mcp = FastMCP(
     # http://server4:24400/mcp/v1 — leaving this to the library default would
     # 404 every consumer on the next mcp SDK bump, silently.
     streamable_http_path="/mcp/v1",
+    # ⛔⛔ FastMCP's `host` param defaults to "127.0.0.1", which silently
+    # auto-enables DNS-rebinding protection with allowed_hosts=["127.0.0.1:*",
+    # "localhost:*", "[::1]:*"] — added in this mcp SDK bump (not present/active
+    # under the old 1.9.3). Every seat reaches this server as
+    # "server4:24400", which matches none of those patterns, so every request
+    # got 421 "Invalid Host header" — a real fleet-wide outage caught live
+    # 2026-08-24, minutes after this migration deployed (a curl loopback test
+    # from localhost on server4 itself passed and hid this; the failure only
+    # showed up testing from another host, the way every real client connects).
+    # This service is internal-LAN-only (network_mode: host, no internet
+    # exposure), so DNS rebinding isn't a meaningful threat model here — same
+    # posture as before this migration. Disabled outright rather than
+    # allowlisting specific hostnames, since an incomplete allowlist would
+    # just re-break some future consumer the same way.
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     instructions=(
         "ALWAYS use this server's tools when the user asks about stock prices, "
         "market data, financial data, tickers, options, trades, quotes, aggregates, "
