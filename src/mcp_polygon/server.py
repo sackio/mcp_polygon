@@ -2182,6 +2182,54 @@ async def clear_flatfile_cache(asset_class: Optional[str] = None) -> Dict[str, A
         return {"error": str(e)}
 
 
+# Massive.com Documentation Tools
+from . import docs
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_massive_docs(
+    section: Optional[str] = None,
+    query: Optional[str] = None,
+    max_results: int = 50,
+    refresh: bool = False,
+) -> Dict[str, Any]:
+    """
+    List/search Massive's documentation index (https://massive.com/docs/llms.txt).
+    Optionally filter by section (e.g. "Rest", "Flat Files", "Websocket") and/or a
+    case-insensitive substring match against each entry's title, description, and URL.
+    Each result's "url" can be passed to get_massive_doc to fetch the full page.
+    """
+    try:
+        entries = docs.list_docs(section=section, query=query, max_results=max_results, refresh=refresh)
+        return {"count": len(entries), "docs": entries}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_massive_doc_sections(refresh: bool = False) -> Dict[str, Any]:
+    """
+    List the top-level sections in Massive's documentation index.
+    """
+    try:
+        return {"sections": docs.list_sections(refresh=refresh)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_massive_doc(path: str) -> Dict[str, Any]:
+    """
+    Fetch one Massive documentation page as raw markdown. `path` can be a full
+    https://massive.com/docs/... URL (as returned by list_massive_docs) or a path
+    relative to that base, with or without the trailing ".md".
+    """
+    try:
+        return docs.get_doc(path)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Directly expose the MCP server object
 # It will be run from entrypoint.py
 

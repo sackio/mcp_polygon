@@ -25,6 +25,14 @@ Old code, old memos and old env vars all say `POLYGON_*`; that is correct and cu
 
 ---
 
+## Massive's docs — llms.txt
+
+**https://massive.com/docs/llms.txt** is Massive's own doc index for LLM consumption — every
+entry links to a `.md` URL that returns raw markdown (no HTML scraping needed). Added
+2026-08-24: `list_massive_docs` (search/filter the index), `list_massive_doc_sections`, and
+`get_massive_doc` (fetch one page by URL or relative path) in `src/mcp_polygon/docs.py`, so
+any agent can look up REST/flat-file/websocket endpoint docs without leaving the MCP session.
+
 ## What you own
 
 | | |
@@ -56,26 +64,38 @@ their repos.
 
 `HEAD` at handoff: `334a537 Add Polygon.io Flat Files S3 access with caching`.
 
-## ⛔ Open item you inherit — the flatfile tools are built but DEAD
+## ✅ Flatfile tools — RESOLVED 2026-08-24
 
 Commit `334a537` added `src/mcp_polygon/flatfiles.py` and 7 tools (`list_flatfiles`,
 `download_flatfile`, `get_flatfile_info`, `list_flatfile_dates`, `list_flatfile_asset_classes`,
-`list_flatfile_data_types`, `clear_flatfile_cache`). **All seven fail on first call:**
+`list_flatfile_data_types`, `clear_flatfile_cache`). They shipped dead — `flatfiles.py` read
+`POLYGON_FLATFILES_ACCESS_KEY`/`POLYGON_FLATFILES_SECRET_KEY`, names that **never existed
+anywhere on the fleet**.
+
+The real, working S3 credentials already lived in `/mnt/nas/data/code/quantum-feed/.env`
+(quantum-feed's ingest tooling), under **four** different names — endpoint and bucket have no
+safe default:
 
 ```
-Flat files credentials not configured in environment
+POLYGON_S3_ACCESS_KEY
+POLYGON_S3_SECRET_KEY
+POLYGON_S3_ENDPOINT
+POLYGON_S3_BUCKET
 ```
 
-`flatfiles.py:35-36` reads `POLYGON_FLATFILES_ACCESS_KEY` and `POLYGON_FLATFILES_SECRET_KEY`
-(S3 credentials, **separate from `POLYGON_API_KEY`**) and raises at line 39 if either is
-empty. `docker-compose.yml:10` passes only `POLYGON_API_KEY`. `.env.example` documents only
-that one too, so nothing on disk hints the other two exist.
+Fixed in commit `542f79a`: `flatfiles.py` now reads those four (no defaults, explicit error
+naming whichever is missing); the download cache moved from `/tmp` (unmounted, wiped every
+restart) to `/app/.cache/flatfiles` (covered by the existing bind mount, survives restarts);
+`docker-compose.yml` and `.env.example` declare all four. The real values live in this repo's
+own untracked `.env` on server4 — **still never committed, never in the compose file itself.**
 
-⚠️ Also `flatfiles.py:55`: cache defaults to `/tmp/polygon_flatfiles` **inside the
-container**, with no volume — every restart re-downloads. Fix both in one edit.
+⚠️ **Every rebuild of this container costs ~4 minutes**, not seconds: `uv run` resyncs a
+project-local `.venv` under the bind-mounted `/app` on every start, and hardlinking from uv's
+cache fails across the NFS boundary, so it falls back to a full copy of ~37 packages. Budget
+for that outage window, it is not a one-off.
 
-⛔ **The keys are Ben's to supply and they do NOT belong in this repo** — it is NAS-shared and
-git-versioned. They go in server4's environment. Ben has the ask as of 2026-08-24.
+Verified live post-rebuild: `get_market_status`, `list_flatfile_asset_classes`, and
+`list_flatfile_dates` (us_stocks_sip/day_aggs_v1/2024, 252 real dates) all returned real data.
 
 ---
 
