@@ -64,17 +64,43 @@ any agent can look up REST/flat-file/websocket endpoint docs without leaving the
 Two more tool groups, both reaching **quantum-data's** stuff (not Massive's) — coordinate
 with quantum-data before changing scope, per "you own the supply, not the consumers."
 
-**Corpus** (`src/mcp_massive/corpus.py`): `list_corpus_lanes`, `resolve_corpus_path`,
-`get_corpus_file_info`, `read_corpus_rows`. Reads quantum-data's sorted per-day parquet
-corpus at `/mnt/nas/data/quantum/replay/ts-sorted` (8 lanes, 38,410 lane-days) — a
-**different** corpus from the Massive S3 flatfile tools above. Path construction is
-imported from quantum-feed's own `qfdata.paths.replay_day`, never re-implemented — a
-second builder is what quantum-feed's spec-030 gate exists to catch. Reads are bounded to
-one parquet row group + column projection; a full lane-day can be 10GB/419M rows.
-Reference: `specs/reference/sorted-corpus-replay-reference.md` in quantum-feed (read
-before touching this file's tool surface — schema/unit gotchas are documented there).
-docker-compose mounts `/mnt/nas/data/quantum` and quantum-feed's `tools/data` read-only
-at matching absolute paths so imports and returned paths need no translation.
+**Corpus, three forms — added 2026-08-24, extended same day to cover all three:**
+
+- **SORTED** (`list_corpus_lanes`, `resolve_corpus_path`, `get_corpus_file_info`,
+  `read_corpus_rows`): quantum-data's sorted per-day parquet corpus at
+  `/mnt/nas/data/quantum/replay/ts-sorted` (8 lanes, 38,410 lane-days) — a
+  **different** corpus from the Massive S3 flatfile tools above. Path construction is
+  imported from quantum-feed's own `qfdata.paths.replay_day`, never re-implemented — a
+  second builder is what quantum-feed's spec-030 gate exists to catch.
+- **PIVOT** (`resolve_pivot_path`, `get_pivot_file_info`, `read_pivot_rows`):
+  per-ticker corpus at `/mnt/nas/data/quantum/zticker` — **us_stocks_sip only**,
+  because that's all `qfdata.paths.zticker_partition` (the canonical builder, reused
+  the same way) supports.
+- **RAW** (`resolve_raw_path`, `get_raw_file_info`, `read_raw_rows`): vendor bytes,
+  unsorted, at `/mnt/store/zpolygon` on server5's local ZFS (22TB) — mounted into the
+  container at server4's own local NFS name for that export, `/mnt/server5/zpolygon`
+  (confirmed via server4's `/proc/mounts`; a *different* host would see a different
+  local name for the same export, but that's irrelevant here since the container
+  reads the file itself and only ever returns rows, never a path meant to be opened
+  on another host). **No canonical path builder exists for RAW** in quantum-feed as
+  of this writing — `raw_day()` in corpus.py is a first implementation, transcribed
+  from quantum-data's description and spot-checked against real files, with a
+  benzinga year-first exception (`benzinga_news_v1/YYYY/MM/YYYY-MM-DD.parquet`, no
+  `lane` segment) that every other cluster doesn't have. This is the *only* way to
+  reach the 4 lanes with no sorted/pivot counterpart (`us_options_opra`
+  day_aggs/minute_aggs/trades, `us_indices` day_aggs — all stopped 2026-06-02). RAW
+  is vendor file order, not timestamp-sorted — prefer SORTED for anything
+  order-sensitive.
+
+All three: reads are bounded to one parquet row group + column projection, capped at
+20,000 rows per call — a full lane-day can be 10GB/419M rows in the largest lanes.
+Reference: `specs/reference/sorted-corpus-replay-reference.md` in quantum-feed covers
+SORTED (read before touching this file's tool surface — schema/unit gotchas are
+documented there); PIVOT and RAW are undocumented anywhere but this file and
+quantum-data's 2026-08-24 messages to this seat. docker-compose mounts
+`/mnt/nas/data/quantum`, quantum-feed's `tools/data`, and (new) server4's
+`/mnt/server5/zpolygon` read-only, all at matching absolute paths so imports and
+returned paths need no translation.
 
 **Ref-data** (`src/mcp_massive/refdata.py`): `list_ref_collections`,
 `get_ref_collection_info`, `query_ref_collection`. Read-only MongoDB access to db
@@ -86,15 +112,6 @@ in this repo's `.env`, from k8s secret `mongodb-credentials` in namespace
 `quantum-feed`) is **not** database-scoped read-only — refdata.py is what enforces
 read-only (find/count only) and rejects server-side-JS filter operators
 (`$where`/`$function`/`$accumulator`/`$expr`).
-
-⚠️ **Not covered by the corpus tools above — raw-only lanes, no sorted form:**
-`us_options_opra/{day_aggs_v1,minute_aggs_v1,trades_v1}` and `us_indices/day_aggs_v1`,
-all stopped 2026-06-02, live only under RAW at `/mnt/store/zpolygon/...` (s5-local, and
-raw uses `YYYY-MM-DD.parquet` filenames vs. sorted's `MM/DD.parquet` — different shape,
-not just a different root). `/mnt/store` **is** NFS-exported from server5 (correcting an
-earlier note in this file) but each host mounts it under its own local name, so there's
-no single absolute path a tool could return fleet-wide. Not built; ask quantum-data
-before adding raw-lane support.
 
 ## What you own
 

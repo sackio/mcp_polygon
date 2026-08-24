@@ -10,6 +10,10 @@ services:
       # of the container so paths returned to callers are directly usable.
       - /mnt/nas/data/quantum:/mnt/nas/data/quantum:ro
       - /mnt/nas/data/code/quantum-feed/tools/data:/mnt/nas/data/code/quantum-feed/tools/data:ro
+      # Read-only: the RAW corpus (vendor bytes). Lives on server5's local ZFS,
+      # NFS-mounted on server4 (this container's host) at this path — server4-
+      # specific, not the same path another host would use for the same export.
+      - /mnt/server5/zpolygon:/mnt/server5/zpolygon:ro
     container_name: mcp_polygon_server
     network_mode: host
     environment:

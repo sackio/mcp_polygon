@@ -2353,6 +2353,98 @@ async def read_corpus_rows(
         return {"error": str(e)}
 
 
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def resolve_pivot_path(lane: str, ticker: str, date: str) -> Dict[str, Any]:
+    """
+    Resolve the on-disk path for one PIVOT (per-ticker) corpus file. us_stocks_sip
+    only — that's what quantum-feed's canonical path builder supports. `date` is
+    YYYY-MM-DD.
+    """
+    try:
+        return corpus.resolve_pivot_path(lane, ticker, date)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_pivot_file_info(lane: str, ticker: str, date: str) -> Dict[str, Any]:
+    """
+    Get parquet metadata for one PIVOT (per-ticker) corpus file — row count,
+    row-group count, column schema — without reading any row data.
+    """
+    try:
+        return corpus.get_pivot_file_info(lane, ticker, date)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def read_pivot_rows(
+    lane: str,
+    ticker: str,
+    date: str,
+    row_group: int = 0,
+    columns: Optional[List[str]] = None,
+    limit: int = 1000,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """
+    Read rows from one row group of one PIVOT (per-ticker) corpus file, with
+    column projection (limit capped at 20,000 rows per call). Most ticker-days
+    are a single row group; check get_pivot_file_info first if unsure.
+    """
+    try:
+        return corpus.read_pivot_rows(lane, ticker, date, row_group, columns, limit, offset)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def resolve_raw_path(cluster: str, lane: str, date: str) -> Dict[str, Any]:
+    """
+    Resolve the on-disk path for one RAW (vendor bytes, unsorted) corpus file,
+    including the 4 lanes with no sorted/pivot counterpart (us_options_opra
+    day_aggs/minute_aggs/trades, us_indices day_aggs — all stopped 2026-06-02).
+    """
+    try:
+        return corpus.resolve_raw_path(cluster, lane, date)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_raw_file_info(cluster: str, lane: str, date: str) -> Dict[str, Any]:
+    """
+    Get parquet metadata for one RAW corpus file — row count, row-group count,
+    column schema — without reading any row data.
+    """
+    try:
+        return corpus.get_raw_file_info(cluster, lane, date)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def read_raw_rows(
+    cluster: str,
+    lane: str,
+    date: str,
+    row_group: int,
+    columns: Optional[List[str]] = None,
+    limit: int = 1000,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """
+    Read rows from one row group of one RAW corpus file, with column projection
+    (limit capped at 20,000 rows per call). RAW is vendor file order, not
+    timestamp-sorted — prefer the sorted-corpus tools for anything order-sensitive.
+    """
+    try:
+        return corpus.read_raw_rows(cluster, lane, date, row_group, columns, limit, offset)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Quantum-data's reference-data MongoDB — read-only, whitelisted collections only
 from . import refdata
 
