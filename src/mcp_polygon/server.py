@@ -2230,6 +2230,117 @@ async def get_massive_doc(path: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+# Quantum-data's sorted corpus (NAS) — read-only
+from . import corpus
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_corpus_lanes() -> Dict[str, Any]:
+    """
+    List the 8 lanes in quantum-data's sorted flatfile corpus on the NAS
+    (/mnt/nas/data/quantum/replay/ts-sorted), with their date span, day count,
+    and row count as of the last measurement. This is a DIFFERENT corpus from
+    the Massive S3 flatfile tools — it is quantum-feed's own ingested, sorted,
+    per-day parquet data.
+    """
+    return {"lanes": corpus.LANES}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def resolve_corpus_path(cluster: str, lane: str, date: str) -> Dict[str, Any]:
+    """
+    Resolve the on-disk path for one lane-day of quantum-data's sorted corpus.
+    `date` is YYYY-MM-DD. Returns whether the file exists and its size.
+    """
+    try:
+        return corpus.resolve_path(cluster, lane, date)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_corpus_file_info(cluster: str, lane: str, date: str) -> Dict[str, Any]:
+    """
+    Get parquet metadata for one lane-day of quantum-data's sorted corpus: row
+    count, row-group count, column schema, and order key — without reading any
+    row data. Use this before read_corpus_rows to plan which row group to read.
+    """
+    try:
+        return corpus.get_file_info(cluster, lane, date)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def read_corpus_rows(
+    cluster: str,
+    lane: str,
+    date: str,
+    row_group: int,
+    columns: Optional[List[str]] = None,
+    limit: int = 1000,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """
+    Read rows from one row group of one lane-day, with column projection.
+    A full lane-day can be 10GB/400M+ rows, so reads are bounded to a single
+    row group (see get_corpus_file_info for the row-group count) with an
+    offset/limit slice inside it (limit capped at 20,000 rows per call).
+    """
+    try:
+        return corpus.read_rows(cluster, lane, date, row_group, columns, limit, offset)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# Quantum-data's reference-data MongoDB — read-only, whitelisted collections only
+from . import refdata
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_ref_collections() -> Dict[str, Any]:
+    """
+    List the whitelisted reference-data collections in quantum-data's MongoDB
+    (db qf_feed): tickers, ETF constituents, market caps, sub-universe
+    classification, ticker details, and trade condition codes. Read-only.
+    """
+    return {"collections": refdata.list_collections()}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_ref_collection_info(collection: str) -> Dict[str, Any]:
+    """
+    Get a live document count and one sample document for a whitelisted
+    reference-data collection, to see its shape before querying it.
+    """
+    try:
+        return refdata.get_collection_info(collection)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def query_ref_collection(
+    collection: str,
+    filter: Optional[Dict[str, Any]] = None,
+    projection: Optional[List[str]] = None,
+    limit: int = 50,
+    sort: Optional[List[List[Any]]] = None,
+) -> Dict[str, Any]:
+    """
+    Read-only query against a whitelisted reference-data collection (MongoDB
+    find semantics). `filter` is a standard MongoDB query dict. `sort` is a
+    list of [field, 1|-1] pairs. `limit` is capped at 500 regardless of what's
+    requested. Only ticker_universe, etf_constituents, historical_caps,
+    sub_universe_classification, ticker_details_cache, and
+    polygon_trade_conditions are reachable — see list_ref_collections.
+    """
+    try:
+        return refdata.query(collection, filter, projection, limit, sort)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Directly expose the MCP server object
 # It will be run from entrypoint.py
 

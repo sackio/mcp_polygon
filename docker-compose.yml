@@ -4,6 +4,12 @@ services:
     build: .
     volumes:
       - .:/app
+      # Read-only: quantum-data's sorted flatfile corpus, and its canonical path
+      # builder (qfdata.paths) so mcp_polygon/corpus.py imports the real thing
+      # instead of re-implementing the path shape. Same absolute path in and out
+      # of the container so paths returned to callers are directly usable.
+      - /mnt/nas/data/quantum:/mnt/nas/data/quantum:ro
+      - /mnt/nas/data/code/quantum-feed/tools/data:/mnt/nas/data/code/quantum-feed/tools/data:ro
     container_name: mcp_polygon_server
     network_mode: host
     environment:
@@ -13,6 +19,7 @@ services:
       - POLYGON_S3_ENDPOINT=${POLYGON_S3_ENDPOINT}
       - POLYGON_S3_BUCKET=${POLYGON_S3_BUCKET}
       - POLYGON_FLATFILES_CACHE_DIR=/app/.cache/flatfiles
+      - QF_MONGO_URI=${QF_MONGO_URI}
       - MCP_TRANSPORT=sse
     entrypoint: []
     command: bash -c 'cd /app && uv run python run_server_host.py'

@@ -33,6 +33,34 @@ entry links to a `.md` URL that returns raw markdown (no HTML scraping needed). 
 `get_massive_doc` (fetch one page by URL or relative path) in `src/mcp_polygon/docs.py`, so
 any agent can look up REST/flat-file/websocket endpoint docs without leaving the MCP session.
 
+## Quantum-data's corpus + ref-data — read-only, added 2026-08-24
+
+Two more tool groups, both reaching **quantum-data's** stuff (not Massive's) — coordinate
+with quantum-data before changing scope, per "you own the supply, not the consumers."
+
+**Corpus** (`src/mcp_polygon/corpus.py`): `list_corpus_lanes`, `resolve_corpus_path`,
+`get_corpus_file_info`, `read_corpus_rows`. Reads quantum-data's sorted per-day parquet
+corpus at `/mnt/nas/data/quantum/replay/ts-sorted` (8 lanes, 38,410 lane-days) — a
+**different** corpus from the Massive S3 flatfile tools above. Path construction is
+imported from quantum-feed's own `qfdata.paths.replay_day`, never re-implemented — a
+second builder is what quantum-feed's spec-030 gate exists to catch. Reads are bounded to
+one parquet row group + column projection; a full lane-day can be 10GB/419M rows.
+Reference: `specs/reference/sorted-corpus-replay-reference.md` in quantum-feed (read
+before touching this file's tool surface — schema/unit gotchas are documented there).
+docker-compose mounts `/mnt/nas/data/quantum` and quantum-feed's `tools/data` read-only
+at matching absolute paths so imports and returned paths need no translation.
+
+**Ref-data** (`src/mcp_polygon/refdata.py`): `list_ref_collections`,
+`get_ref_collection_info`, `query_ref_collection`. Read-only MongoDB access to db
+`qf_feed` (192.168.1.42:27017), **whitelisted to 6 collections only** (tickers, ETF
+constituents, market caps, classification, ticker details, trade conditions) —
+quantum-data explicitly excluded 17 `*_records` pipeline-state collections (empty,
+spec-023 not live) and experiment-snapshot collections. The credential (`QF_MONGO_URI`
+in this repo's `.env`, from k8s secret `mongodb-credentials` in namespace
+`quantum-feed`) is **not** database-scoped read-only — refdata.py is what enforces
+read-only (find/count only) and rejects server-side-JS filter operators
+(`$where`/`$function`/`$accumulator`/`$expr`).
+
 ## What you own
 
 | | |

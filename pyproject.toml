@@ -8,6 +8,8 @@ dependencies = [
     "mcp[cli]>=1.9.3",
     "polygon-api-client>=1.15.3",
     "boto3>=1.35.0",
+    "pyarrow>=17.0.0",
+    "pymongo>=4.6.0",
 ]
 [[project.authors]]
 name = "Polygon"
