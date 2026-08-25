@@ -190,8 +190,8 @@ Verified live post-rebuild: `get_market_status`, `list_flatfile_asset_classes`, 
 - ⚑ **Pair every negative with a positive control.** An empty S3 listing and a broken client
   look identical.
 - ⚑ **Name the host.** The corpus is on **server5**; the container is on **server4**; the
-  files are on NAS. `/home/ben` symlinks exist on office/server4 but **not on server3**.
-  Always write `/mnt/nas/...` in anything that may run elsewhere.
+  files are on NAS. `/home/ben` is host-local — different content per host — so record
+  `/mnt/nas/...` paths, not anything under `/home/ben`, in anything that may run elsewhere.
 - ⚑ **Say which claims are MEASURED and which are INFERRED** when you hand work to anyone.
 
 ## Read before acting — and re-verify before repeating
