@@ -1,6 +1,6 @@
 ---
 name: massive-api-discovery
-description: Discover and call any Massive/Polygon REST endpoint through the massive/polygon MCP's generic proxy (search_endpoints, call_api, query_data), instead of guessing a path or assuming an explicit tool exists. Use whenever the ~65 explicit per-endpoint tools (get_aggs, list_trades, etc.) don't cover what you need. Trigger phrases: "search_endpoints", "call_api", "query_data", "find the right endpoint", "no tool for this", "massive REST API", "1500 endpoints".
+description: Discover and call any Massive/Polygon REST endpoint through the massive/polygon MCP's generic proxy (search_endpoints, call_api, query_data), instead of guessing a path or assuming an explicit tool exists. Use whenever the ~65 explicit per-endpoint tools (get_aggs, list_trades, etc.) don't cover what you need. Trigger phrases: search_endpoints, call_api, query_data, find the right endpoint, no tool for this, massive REST API, polygon REST API, 1500 endpoints, is there an endpoint for, which endpoint, generic REST call, SQL on results, store results as a table, multi-step analysis.
 ---
 
 # massive-api-discovery

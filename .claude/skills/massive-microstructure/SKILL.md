@@ -1,6 +1,6 @@
 ---
 name: massive-microstructure
-description: Build tick/volume/dollar bars from raw trades, and measure effective spread from raw NBBO quotes, using the massive/polygon MCP's corpus tools. Use whenever a task needs market-microstructure detail (spread, liquidity, execution cost) rather than OHLCV bars. Trigger phrases: "tick bars", "volume bars", "dollar bars", "effective spread", "bid-ask spread", "NBBO", "crossed quote", "locked quote", "slippage measurement".
+description: Build tick/volume/dollar bars from raw trades, and measure effective spread from raw NBBO quotes, using the massive/polygon MCP's corpus tools. Use whenever a task needs market-microstructure detail (spread, liquidity, execution cost) rather than OHLCV bars. Trigger phrases: tick bars, volume bars, dollar bars, effective spread, bid-ask spread, bid ask spread, NBBO, crossed quote, locked quote, slippage measurement, market microstructure, liquidity, execution cost, transaction cost, quote data, trade data, order flow, market impact.
 ---
 
 # massive-microstructure

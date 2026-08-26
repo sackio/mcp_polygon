@@ -1,6 +1,6 @@
 ---
 name: massive-flatfiles
-description: Decide between REST, the saved NAS corpus, and on-demand S3 flatfiles when asked whether Massive/Polygon data exists for something, and how to page/cache flatfile downloads without blowing disk. Use before answering "do we have X data" and before any bulk historical pull. Trigger phrases: "do we have this data", "flatfile vs rest", "download flatfiles", "S3 pull", "bulk historical data", "which tool should I use for".
+description: Decide between REST, the saved NAS corpus, and on-demand S3 flatfiles when asked whether Massive/Polygon data exists for something, and how to page/cache flatfile downloads without blowing disk. Use before answering "do we have X data" and before any bulk historical pull. Trigger phrases: do we have this data, is this data available, flatfile vs rest, download flatfiles, S3 pull, bulk historical data, which tool should I use for, where does this data live, pull a day of data, download historical data, get all the data for, mass download, batch download, historical data source.
 ---
 
 # massive-flatfiles

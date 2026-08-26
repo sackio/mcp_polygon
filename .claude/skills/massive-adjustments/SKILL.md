@@ -1,6 +1,6 @@
 ---
 name: massive-adjustments
-description: Apply split/dividend adjustment correctly when building a continuous price series from Massive/Polygon data. Use whenever a backtest or notebook spans a known split or dividend and needs prices that don't jump discontinuously. Trigger phrases: "split adjusted", "continuous price series", "backtest jumps", "price discontinuity", "adjusted close", "dividend adjustment".
+description: Apply split/dividend adjustment correctly when building a continuous price series from Massive/Polygon data. Use whenever a backtest or notebook spans a known split or dividend and needs prices that don't jump discontinuously. Trigger phrases: split adjusted, split-adjusted, continuous price series, backtest jumps, price discontinuity, price gap, price jump, adjusted close, unadjusted, raw prices, dividend adjustment, total return series, back-adjusted, why does the price jump, stock split price, does this account for splits, splits and dividends.
 ---
 
 # massive-adjustments

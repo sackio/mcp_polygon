@@ -1,6 +1,6 @@
 ---
 name: massive-refdata
-description: Query quantum-data's read-only reference-data MongoDB (ticker universe, ETF constituents, market caps, classification) via the massive/polygon MCP, and build a point-in-time universe without survivorship bias. Use whenever a backtest needs "what tickers existed/were in an index on date X" rather than today's list. Trigger phrases: "survivorship bias", "point in time universe", "ticker universe", "ETF constituents", "historical market cap", "sector classification", "index membership on a date".
+description: Query quantum-data's read-only reference-data MongoDB (ticker universe, ETF constituents, market caps, classification) via the massive/polygon MCP, and build a point-in-time universe without survivorship bias. Use whenever a backtest needs "what tickers existed/were in an index on date X" rather than today's list. Trigger phrases: survivorship bias, point in time universe, point-in-time, ticker universe, ETF constituents, ETF holdings, historical market cap, market cap history, sector classification, industry classification, index membership on a date, what was in the index, universe construction, tradeable universe, historical ticker list, ticker details, reference data, mongo query, refdata.
 ---
 
 # massive-refdata

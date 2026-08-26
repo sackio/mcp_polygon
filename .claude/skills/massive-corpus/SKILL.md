@@ -1,6 +1,6 @@
 ---
 name: massive-corpus
-description: Read quantum-data's ingested market-data corpus via the massive/polygon MCP's corpus tools (SORTED, PIVOT, RAW forms). Use whenever a task needs historical trades/quotes/aggs for a whole market or a single ticker from the NAS corpus, not the live API. Trigger phrases: "read the corpus", "sorted corpus", "per-ticker parquet", "zticker", "ts-sorted", "quantum-data flatfiles", "row group", "resolve_corpus_path", "read_corpus_rows".
+description: Read quantum-data's ingested market-data corpus via the massive/polygon MCP's corpus tools (SORTED, PIVOT, RAW forms). Use whenever a task needs historical trades/quotes/aggs for a whole market or a single ticker from the NAS corpus, not the live API. Trigger phrases: read the corpus, sorted corpus, per-ticker parquet, zticker, ts-sorted, quantum-data flatfiles, row group, historical trades, historical quotes, historical aggregates, historical bars, tick data, NBBO history, parquet corpus, market data on the NAS, price history for a ticker, full day of trades, whole market data, order book history, resolve_corpus_path, read_corpus_rows, get_corpus_file_info.
 ---
 
 # massive-corpus

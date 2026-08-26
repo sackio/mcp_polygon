@@ -1,6 +1,6 @@
 ---
 name: massive-options
-description: Get options chains, contract reference data, snapshots, greeks/IV, and historical options trades/quotes through the massive/polygon MCP. Use whenever a task needs option contract data — chains, a specific contract's quote, or bulk historical options data. Trigger phrases: "option chain", "option contracts", "option snapshot", "greeks", "implied volatility", "open interest", "OPRA".
+description: Get options chains, contract reference data, snapshots, greeks/IV, and historical options trades/quotes through the massive/polygon MCP. Use whenever a task needs option contract data — chains, a specific contract's quote, or bulk historical options data. Trigger phrases: option chain, option contracts, option snapshot, options data, options quote, greeks, delta, gamma, theta, vega, implied volatility, IV, open interest, OPRA, options trades, options quotes, options aggregates, calls and puts, strike price, expiration date.
 ---
 
 # massive-options
