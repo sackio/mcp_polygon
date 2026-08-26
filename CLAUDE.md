@@ -193,6 +193,14 @@ Verified live post-rebuild: `get_market_status`, `list_flatfile_asset_classes`, 
   files are on NAS. `/home/ben` is host-local — different content per host — so record
   `/mnt/nas/...` paths, not anything under `/home/ben`, in anything that may run elsewhere.
 - ⚑ **Say which claims are MEASURED and which are INFERRED** when you hand work to anyone.
+- ⚑ **"Do we have X" has three possible answers, not one — give all that apply.** 2026-08-26:
+  asked whether options data existed, answered only "no materialized corpus + here's the S3
+  pull" and left out REST entirely — for something like an options chain, REST (`call_api`,
+  `get_snapshot_option`, `search_endpoints`) isn't a fallback, it's usually the *right* answer,
+  since chains/snapshots aren't a flatfile product at all. Check all three before answering:
+  **REST** (live/reference), **flatfiles already materialized** (a saved corpus, if one
+  exists), **flatfiles on demand** (S3 pull via `list_flatfiles`/`download_flatfile`, if
+  nothing's saved). Don't narrow to whichever one you were already thinking about.
 
 ## Read before acting — and re-verify before repeating
 
