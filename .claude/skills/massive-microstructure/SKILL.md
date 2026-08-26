@@ -32,10 +32,17 @@ trf_timestamp`.
 1. **Zero-price rows are real, not a bug** — pre-market placeholder quotes with
    `bid_price=ask_price=0, bid_size=ask_size=0`. Drop them; a spread computed against $0/$0 is
    nonsense.
-2. **`indicators` carries NBBO condition flags** — comma-string, same shape as `conditions`.
-   Verified against Massive's own conditions/indicators glossary: `84` = Crossed_Market,
-   `85` = Locked_Market, `-1` = Invalid, `20` = NonFirm. Exclude quotes carrying any of these
-   before treating bid/ask as a real, tradeable NBBO.
+2. ⛔ **`indicators`/`conditions` do NOT carry the documented flags in the stored NAS corpus —
+   filter on price instead.** Massive's own glossary documents `84`=Crossed_Market,
+   `85`=Locked_Market, `-1`=Invalid, `20`=NonFirm, but measured against SPY 2024-06-03
+   (`us_stocks_sip/quotes_v1`, 2,572,150 rows, vbt 2026-08-26): `indicators` only ever takes
+   `'1'` or `null`, `conditions` is the constant `'1,81'` on every single row, and 17,377 quotes
+   are crossed by price (bid > ask) — including 16,585 inside 09:30–15:59 ET — with indicators
+   and conditions identical to every clean row. **The documented flags mark 0 of them.** Not
+   yet known whether ingestion drops the flags or upstream never carried them for this lane —
+   ask quantum-data if it matters for your use case. **What actually works: filter
+   `ask_price > bid_price > 0`.** An unfiltered spread on this corpus reaches -20,000 bps;
+   filtered, SPY 2024-06-03 median spread was 0.379 bps, p99 0.95, max 26.7.
 
 With clean quotes: effective spread for a trade = `2 * |trade_price - midpoint| / midpoint`
 where midpoint is the prevailing NBBO midpoint at (or just before) the trade's `sip_timestamp`
