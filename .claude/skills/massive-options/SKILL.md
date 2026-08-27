@@ -5,8 +5,10 @@ description: Get options chains, contract reference data, snapshots, greeks/IV, 
 
 # massive-options
 
-No saved corpus for options exists on the NAS (checked 2026-08-26 — see `massive-corpus`).
-Two live paths, pick based on shape:
+No saved options corpus in the NAS SORTED/PIVOT forms (checked 2026-08-26 — see
+`massive-corpus`). There IS a saved RAW corpus for options — see the RAW section below —
+it just lives on server5-local ZFS, not the NAS, and stops 2026-06-02.
+Three paths total, pick based on shape and date:
 
 ## Chains, snapshots, reference — REST
 
