@@ -28,8 +28,9 @@ Chains/snapshots aren't a flatfile product — don't go looking for them in the 
 just never ingested into the NAS corpus. `download_flatfile` to pull a specific day. See
 `massive-flatfiles` for the general S3 mechanics.
 
-⚠️ quantum-data's own RAW ingestion of `us_options_opra` (day_aggs/minute_aggs/trades, no
-quotes) stopped 2026-06-02 and lives at `/mnt/store/zpolygon` (server5, mounted into the MCP
-container at `/mnt/server5/zpolygon`) — reachable read-only via `resolve_raw_path`/
-`get_raw_file_info`/`read_raw_rows` for dates up to 2026-06-02 only. For anything newer, use
-the S3 flatfiles above.
+⚠️ quantum-data's own RAW ingestion of `us_options_opra` (`day_aggs_v1`/`minute_aggs_v1`/
+`trades_v1` — note the `_v1` suffix, a bare `day_aggs` lane name returns `exists:false` even
+though the data is there, no quotes lane exists) stopped 2026-06-02 and lives at
+`/mnt/store/zpolygon` (server5, mounted into the MCP container at `/mnt/server5/zpolygon`) —
+reachable read-only via `resolve_raw_path`/`get_raw_file_info`/`read_raw_rows` for dates up to
+2026-06-02 only. For anything newer, use the S3 flatfiles above.

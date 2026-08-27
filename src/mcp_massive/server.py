@@ -2404,7 +2404,10 @@ async def resolve_raw_path(cluster: str, lane: str, date: str) -> Dict[str, Any]
     """
     Resolve the on-disk path for one RAW (vendor bytes, unsorted) corpus file,
     including the 4 lanes with no sorted/pivot counterpart (us_options_opra
-    day_aggs/minute_aggs/trades, us_indices day_aggs — all stopped 2026-06-02).
+    day_aggs_v1/minute_aggs_v1/trades_v1, us_indices day_aggs_v1 — all
+    stopped 2026-06-02). Lane names carry the _v1 suffix, unlike this doc's
+    prose shorthand elsewhere — use the exact RAW_ONLY_LANES names or exists
+    comes back false on a lane that is actually there.
     """
     try:
         return corpus.resolve_raw_path(cluster, lane, date)

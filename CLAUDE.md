@@ -88,7 +88,11 @@ with quantum-data before changing scope, per "you own the supply, not the consum
   benzinga year-first exception (`benzinga_news_v1/YYYY/MM/YYYY-MM-DD.parquet`, no
   `lane` segment) that every other cluster doesn't have. This is the *only* way to
   reach the 4 lanes with no sorted/pivot counterpart (`us_options_opra`
-  day_aggs/minute_aggs/trades, `us_indices` day_aggs — all stopped 2026-06-02). RAW
+  day_aggs_v1/minute_aggs_v1/trades_v1, `us_indices` day_aggs_v1 — all stopped
+  2026-06-02, reverified on-disk 2026-08-27). ⚠️ **Lane names carry the `_v1`
+  suffix** — `resolve_raw_path(cluster="us_options_opra", lane="day_aggs")`
+  (no suffix) returns `exists:false` even though the data is there; this
+  false negative burned a caller on 2026-08-27 before being caught. RAW
   is vendor file order, not timestamp-sorted — prefer SORTED for anything
   order-sensitive.
 
