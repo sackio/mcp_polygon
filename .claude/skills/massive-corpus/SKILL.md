@@ -31,12 +31,16 @@ server-side regardless of what you ask for.
 - Corpus data is **raw, unadjusted** for splits/dividends. See `massive-adjustments`.
 - PIVOT's canonical path builder (`qfdata.paths.zticker_partition`) only covers
   `us_stocks_sip` — there is no per-cluster pivot for other markets.
-- ⛔ **`trades_v1` column types drift across years — not stable in either SORTED or PIVOT.**
-  Measured by `tradedesk` 2026-08-29: `id` goes `int64` → `large_string` and `size` goes
-  `int64` → `double` somewhere in the date range. Naive multi-day/multi-year concatenation
-  either fails on the type mismatch or silently coerces (e.g. an int64 `id` cast to string
-  loses nothing, but code that assumes `id` is numeric downstream breaks quietly). Cast
-  explicitly per-day before concatenating; don't assume one dtype holds across years.
+- ⛔ **Column types drift across years — not stable in either SORTED or PIVOT.**
+  `trades_v1.size` and `minute_aggs_v1.volume` flip `int64` → `double` pinned to
+  **2026-02-23** (Massive/Polygon switched to fixed-6-decimal formatting on that date — see
+  memo `1d1bef48`). `trades_v1.id` also flips `int64` → `large_string` somewhere in the date
+  range (measured by `tradedesk` 2026-08-29) — exact date not yet pinned. Naive multi-day/
+  multi-year concatenation either fails on the type mismatch or silently coerces (e.g. code
+  assuming `id` is numeric downstream breaks quietly once it flips to string). Cast explicitly
+  per-day before concatenating; don't assume one dtype holds across years. There's also an
+  order-dependent silent-truncation-vs-loud-refusal hazard on reads spanning that boundary —
+  see memo `1d1bef48` before writing a scan that crosses 2026-02-23.
 
 ## Building a continuous per-ticker series
 
