@@ -31,13 +31,25 @@ server-side regardless of what you ask for.
 - Corpus data is **raw, unadjusted** for splits/dividends. See `massive-adjustments`.
 - PIVOT's canonical path builder (`qfdata.paths.zticker_partition`) only covers
   `us_stocks_sip` — there is no per-cluster pivot for other markets.
+- ⛔ **`trades_v1` column types drift across years — not stable in either SORTED or PIVOT.**
+  Measured by `tradedesk` 2026-08-29: `id` goes `int64` → `large_string` and `size` goes
+  `int64` → `double` somewhere in the date range. Naive multi-day/multi-year concatenation
+  either fails on the type mismatch or silently coerces (e.g. an int64 `id` cast to string
+  loses nothing, but code that assumes `id` is numeric downstream breaks quietly). Cast
+  explicitly per-day before concatenating; don't assume one dtype holds across years.
 
 ## Building a continuous per-ticker series
 
-PIVOT already gives you one ticker across time — just resolve each date's file and
-concatenate. For SORTED, you'd otherwise have to scan every day's whole-market file and
-filter — don't; use PIVOT for single-ticker work, SORTED only for cross-sectional/whole-market
-questions.
+PIVOT already gives you one ticker across time — resolve each date's file, **cast columns to
+a fixed schema per day** (see the `trades_v1` drift above), then concatenate. For SORTED,
+you'd otherwise have to scan every day's whole-market file and filter — don't; use PIVOT for
+single-ticker work, SORTED only for cross-sectional/whole-market questions.
+
+## Practical row-count sizing (measured, AAPL)
+
+One trading day: `trades_v1` ~520K–821K rows, 1–2 row groups, ~9MB — usually 1-2 `read_*_rows`
+calls. `quotes_v1` ~2.57M rows — roughly **130 calls** at the 20,000-row server cap. Size a
+loop budget accordingly before starting a multi-day pull, especially for quotes.
 
 ## Reference
 
