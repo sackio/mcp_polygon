@@ -29,3 +29,19 @@ data is unadjusted, so splits appear as real price jumps).
 Filter by `ticker`, `ipo_status` (upcoming/history), `listing_date` (exact or range). Covers
 both a forward-looking calendar and historical listings — same tool for both, just filter by
 status/date direction.
+
+## ⛔ Earnings ANNOUNCEMENT dates (BMO/AMC) — entitlement gap, not a bug
+
+This account is **not entitled** to either route that would give a confirmed BMO/AMC earnings
+timestamp — confirmed live 2026-08-29: `call_api(path="/tmx/v1/corporate-events", ...)` and
+`call_api(path="/benzinga/v1/earnings", ...)` / `list_benzinga_earnings` all return HTTP 403
+"You are not entitled to this data." Both are Partners-tier products; the billed Benzinga
+News line only covers `/benzinga/v2/news`. Fixing this needs Ben to upgrade the plan — don't
+retry or assume it's transient.
+
+**Partial on-disk workaround**: the ingested Benzinga `news_v1` corpus (RAW,
+`benzinga_news_v1`, 2009-01-01–present) tags individual articles with an `earnings`/
+`earnings beats` channel and a `published_at` timestamp — this is when Benzinga posted an
+earnings-related article (often same-day results recaps), **not** a structured
+scheduled-vs-actual event record with an explicit BMO/AMC field. Usable as a noisy proxy for
+day-0 assignment in an event study, not a substitute for a real corporate-events feed.
