@@ -47,16 +47,29 @@ server-side regardless of what you ask for.
   0=regular, 1=sell-side, 2=buy-side — a real aggressor-side tag. Only `participant_timestamp`
   exists (ns) — no separate consolidated-tape timestamp, since crypto isn't SIP-consolidated
   the way equities are.
-- ⛔ **Column types drift across years — not stable in either SORTED or PIVOT.**
-  `trades_v1.size` and `minute_aggs_v1.volume` flip `int64` → `double` pinned to
-  **2026-02-23** (Massive/Polygon switched to fixed-6-decimal formatting on that date — see
-  memo `1d1bef48`). `trades_v1.id` also flips `int64` → `large_string` somewhere in the date
-  range (measured by `tradedesk` 2026-08-29) — exact date not yet pinned. Naive multi-day/
-  multi-year concatenation either fails on the type mismatch or silently coerces (e.g. code
-  assuming `id` is numeric downstream breaks quietly once it flips to string). Cast explicitly
-  per-day before concatenating; don't assume one dtype holds across years. There's also an
-  order-dependent silent-truncation-vs-loud-refusal hazard on reads spanning that boundary —
-  see memo `1d1bef48` before writing a scan that crosses 2026-02-23.
+- ⛔ **Column types drift across years — SORTED and PIVOT drift on DIFFERENT columns at
+  DIFFERENT times, not the same pattern.** Confirmed 2026-08-31 by directly comparing
+  `get_corpus_file_info` (SORTED) vs `get_pivot_file_info` (PIVOT) for AAPL `trades_v1` and
+  `minute_aggs_v1` across 2015–2026 — an earlier version of this note wrongly implied both
+  corpora drift the same way. They don't:
+  - **SORTED** `trades_v1.size`: `int64` (confirmed 2015-01-05) → `double` (confirmed
+    2026-02-24), boundary pinned to **~2026-02-23** (Massive/Polygon's fixed-6-decimal
+    formatting change — see memo `1d1bef48`). `trades_v1.id`: `int32` (2015) → `int64`
+    (2026) — **never becomes a string on SORTED.**
+  - **PIVOT** `trades_v1.size`: **no drift** — `double` the entire way back to 2015-01-05.
+    Do not apply the SORTED size-drift date to PIVOT.
+  - **PIVOT** `trades_v1.id`: `int64` (confirmed 2021-07-01) → `large_string` (confirmed
+    2022-06-01) — boundary somewhere in that 11-month window, not narrowed further. This is
+    the one that flips to a *string*, and it's PIVOT-only.
+  - **PIVOT** `minute_aggs_v1.volume`: `int64` (confirmed 2026-01-26) → `double` (confirmed
+    2026-02-05) — a real drift, but ~3 weeks earlier than the SORTED `trades_v1.size` boundary
+    people tend to reflexively cite; don't assume the two dates coincide.
+  Naive multi-day/multi-year concatenation either fails on the type mismatch (pyarrow raises
+  `ArrowInvalid: ... truncated converting to int64` when it unifies a double fragment against
+  an int64-majority schema — this is what a schema-drift failure actually looks like, not
+  corrupt data) or silently coerces (code assuming `id` is numeric breaks quietly once PIVOT
+  flips it to string). Cast explicitly per-file before concatenating; never assume one dtype
+  holds across years, and never assume SORTED's drift dates apply to PIVOT or vice versa.
 
 ## Building a continuous per-ticker series
 
