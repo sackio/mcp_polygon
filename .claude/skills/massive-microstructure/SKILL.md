@@ -21,6 +21,23 @@ running accumulator over the ordered rows: N trades (tick), N shares (volume), o
 trades, except: `conditions` is a comma-joined string (`"12,37"`), not an array — split it if
 you need to exclude non-regular trades (odd-lot, average-price, etc.) from your bars.
 
+⛔ **`minute_aggs_v1.volume` is NOT simply `sum(trades_v1.size)` filtered on `updates_volume`
+— don't reach for the `list_conditions` flag alone.** The condition-codes reference
+(`/v3/reference/conditions`) marks only codes 15/16/38 as `updates_volume: false`; odd-lot
+code 37 is genuinely `updates_volume: true` (not a metadata error). But excluding only
+{15,16,38} leaves a real residual against `minute_aggs_v1.volume` — confirmed 2026-08-30
+across three independent measurements (`tradedesk` on Agilent and GME, this seat on
+CENX 2025-01-06): **the exclusion set that actually reconciles to <1% is `{15, 16, 38, 8, 22}`**
+— i.e. also drop condition 8 (opening/closing auction cross) and 22 (Prior Reference Price),
+and **do NOT exclude odd lots (37)** — odd lots count toward `minute_aggs_v1.volume` despite
+their small size. CENX check: `sum(trades_v1.size)` with only {15,16,38} excluded = 1,710,609
+and matches `get_aggs(timespan="day").v` exactly, but `minute_aggs_v1.volume` summed across
+that day's minute bars is 1,489,465 — a **different number from the day bar** — and only
+`{15,16,38,8,22}` gets within ~0.6% of that minute-summed figure. ⚠️ **Day-bar volume and
+sum(minute-bar volume) are not the same number for the same ticker-day** — pick the right
+target before reconciling, they can differ by >10%. No Massive doc found describing either
+computation explicitly; this exclusion set is empirical, not documented.
+
 ## Effective spread from quotes_v1
 
 Columns: `ticker, ask_exchange, ask_price, ask_size, bid_exchange, bid_price, bid_size,
