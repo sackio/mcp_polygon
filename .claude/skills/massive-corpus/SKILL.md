@@ -30,7 +30,23 @@ server-side regardless of what you ask for.
   decoding bug. Filter before computing spread (see `massive-microstructure`).
 - Corpus data is **raw, unadjusted** for splits/dividends. See `massive-adjustments`.
 - PIVOT's canonical path builder (`qfdata.paths.zticker_partition`) only covers
-  `us_stocks_sip` — there is no per-cluster pivot for other markets.
+  `us_stocks_sip` — there is no per-cluster pivot for other markets, and `resolve_pivot_path`
+  takes no `cluster` argument at all — it's implicit. ⛔ **Passing a non-`us_stocks_sip` ticker
+  (e.g. a crypto ticker like `X:BTC-USD`) does NOT error** — it silently builds a
+  `us_stocks_sip/...` path anyway and returns `exists:false`, which reads exactly like "no
+  data for this date" rather than "wrong cluster, PIVOT doesn't cover this." Confirmed
+  2026-08-31. For crypto (or any non-`us_stocks_sip` cluster), stay on SORTED whole-market day
+  files and filter by ticker yourself.
+- ⛔ **No crypto quotes lane exists anywhere** — not SORTED, not flatfiles, not REST. Confirmed
+  2026-08-31: `global_crypto` only has `day_aggs_v1`/`minute_aggs_v1`/`trades_v1`. A genuine
+  vendor gap, not an ingestion gap — quantum-data never had this to ingest.
+- `global_crypto/trades_v1` only has 5 possible exchange codes (`get_exchanges(asset_class=
+  "crypto")`): Coinbase(1), Bitfinex(2), Bitstamp(6), Binance.US(10), Kraken(23) — "Binance"
+  here is Binance.US specifically, not global Binance, much thinner liquidity than the name
+  suggests. `conditions` for crypto trades is simple and useful, unlike stocks' SIP mess:
+  0=regular, 1=sell-side, 2=buy-side — a real aggressor-side tag. Only `participant_timestamp`
+  exists (ns) — no separate consolidated-tape timestamp, since crypto isn't SIP-consolidated
+  the way equities are.
 - ⛔ **Column types drift across years — not stable in either SORTED or PIVOT.**
   `trades_v1.size` and `minute_aggs_v1.volume` flip `int64` → `double` pinned to
   **2026-02-23** (Massive/Polygon switched to fixed-6-decimal formatting on that date — see
