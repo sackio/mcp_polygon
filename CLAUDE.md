@@ -197,6 +197,14 @@ Verified live post-rebuild: `get_market_status`, `list_flatfile_asset_classes`, 
   files are on NAS. `/home/ben` is host-local — different content per host — so record
   `/mnt/nas/...` paths, not anything under `/home/ben`, in anything that may run elsewhere.
 - ⚑ **Say which claims are MEASURED and which are INFERRED** when you hand work to anyone.
+- ⚑ **The tool schema does not reflect account entitlement.** Confirmed 2026-08-31:
+  `list_benzinga_earnings` and `call_api(path="/tmx/v1/corporate-events")` are both fully
+  registered, correctly implemented tools that return HTTP 403 "not entitled" on every call —
+  Partners-tier vendor products this account isn't subscribed to. This is a *different* trap
+  from the flatfile credential bug above (broken code that could be fixed): here the tool is
+  correctly built and will 403 forever until Ben upgrades the plan. A tool appearing in the
+  list, or even working correctly in code review, still proves nothing about whether THIS
+  account can actually call it — only a live call does.
 - ⚑ **"Do we have X" has three possible answers, not one — give all that apply.** 2026-08-26:
   asked whether options data existed, answered only "no materialized corpus + here's the S3
   pull" and left out REST entirely — for something like an options chain, REST (`call_api`,
