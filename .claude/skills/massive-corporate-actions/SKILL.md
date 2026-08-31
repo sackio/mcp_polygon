@@ -38,16 +38,22 @@ reachable on this account — confirmed live 2026-08-29, HTTP 403 "not entitled"
 by Ben upgrading the plan is the only way to unblock these directly — don't retry, don't
 assume transient. **Don't reach for these first anyway; two better routes exist below.**
 
-### Forward calendar (upcoming earnings) — AlphaVantage, free, confirmed working
+### Forward calendar (upcoming earnings) — use `get_earnings_calendar`, not AlphaVantage directly
 
-`mcp__alphavantage__EARNINGS_CALENDAR(symbol, horizon)` — a separate fleet MCP, no Massive
-entitlement needed. **Omit `symbol` for the WHOLE MARKET in one call** — confirmed live
-2026-08-31: `horizon="3month"` with no symbol returned 1,589 tickers' upcoming earnings in a
-single CSV response, one request. `timeOfTheDay` (BMO/AMC) is present but sparse — filled on
-~9% of rows (142/1,589) in that pull — check per-row, don't assume it's there. AlphaVantage's
-free tier caps at **25 requests/day total**, so pulling the full calendar once (or a couple
-times) a day is well within budget; don't loop it per-ticker, one no-symbol call already gets
-everything.
+⭐ **Call this MCP's own `get_earnings_calendar(ticker?)` tool, added 2026-08-31.** It reads a
+shared, daily-refreshed cache (populated by one scheduled `EARNINGS_CALENDAR` call/day —
+AlphaVantage's free tier caps at **25 requests/day fleet-wide**, and every agent calling
+AlphaVantage directly would burn through that fast). Free to call, no rate limit for readers.
+Response includes `age_hours`/`stale` (true past 36h) — check `stale` before trusting it if
+the daily refresh may have missed a run.
+
+Underlying source: `mcp__alphavantage__EARNINGS_CALENDAR(symbol, horizon)`, a separate fleet
+MCP, no Massive entitlement needed. Confirmed live 2026-08-31: omitting `symbol` returns the
+**whole market** in one call — `horizon="3month"` returned 1,589 tickers in a single CSV
+response. `timeOfTheDay` (BMO/AMC) is present but sparse — filled on ~9% of rows (142/1,589)
+in the baseline pull — check per-row, don't assume it's there. Only call AlphaVantage directly
+if you need a `horizon` other than 3month (the cache only tracks 3month) — never loop it
+per-ticker, one no-symbol call already gets everything.
 
 ### Historical earnings-date/timing — ask `mind`, not Massive
 

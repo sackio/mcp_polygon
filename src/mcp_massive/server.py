@@ -2496,6 +2496,27 @@ async def query_ref_collection(
         return {"error": str(e)}
 
 
+from . import earnings_cache
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_earnings_calendar(ticker: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Read the shared, daily-refreshed cache of AlphaVantage's whole-market
+    upcoming-earnings calendar (forward-looking only, no history). Free to call
+    — this reads a local file, no rate limit. A daily scheduled job is the only
+    thing that actually calls AlphaVantage (its free tier caps at 25 req/day
+    fleet-wide), so every caller shares one cache instead of spending their own
+    quota. Pass `ticker` to filter to one symbol, or omit for the whole market.
+    Response includes `age_hours` and `stale` (true past 36h) — check `stale`
+    before trusting the data if the daily job may have missed a run. BMO/AMC
+    timing (`timeOfTheDay` per row) is present but sparse — filled on roughly
+    9% of rows as of the 2026-08-31 baseline pull. For historical earnings
+    dates (not upcoming), this tool has nothing — see CLAUDE.md/the
+    massive-corporate-actions skill for the EDGAR 8-K route instead.
+    """
+    return earnings_cache.get_earnings_calendar(ticker)
+
 
 # ── Massive generic REST proxy (search_endpoints / call_api / query_data) ──
 # Adopted verbatim from upstream massive-com/mcp_massive 2026-08-24, alongside
