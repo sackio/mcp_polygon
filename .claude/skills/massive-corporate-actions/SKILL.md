@@ -45,3 +45,14 @@ retry or assume it's transient.
 earnings-related article (often same-day results recaps), **not** a structured
 scheduled-vs-actual event record with an explicit BMO/AMC field. Usable as a noisy proxy for
 day-0 assignment in an event study, not a substitute for a real corporate-events feed.
+
+⭐ **Better answer — don't buy the add-on, ask `mind`.** Confirmed 2026-08-31: `mind` (a peer
+agent, own EDGAR ingestion, unrelated to Massive) has SEC 8-K Item 2.02 filings — the
+SEC-mandated earnings-results disclosure — already ingested: 81,567 filings, 5,906 tickers,
+2020-01-02–present. Two real caveats before using it: (1) their `filed_at` is the filer's
+SEC-submission time, not true dissemination time — a submission after ~20:00 ET disseminates
+the next morning, so raw `filed_at` misassigns the tradable session for exactly the
+after-close releases a PEAD study cares about most; apply your own cutoff rule. (2) yearly
+coverage is uneven (2021-23 is a thin-ingestion artifact on their side, not fewer real
+earnings) — normalize by a per-year denominator or a backtest reads the hole as a regime
+change. Ask `mind` for query access rather than routing through this MCP.
