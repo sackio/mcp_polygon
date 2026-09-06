@@ -19,6 +19,10 @@ dependencies = [
     "numpy>=2.4.4",
     "pydantic>=2.12.5",
     "sqlglot>=30.4.0",
+    # pure-Python, no key/network — 211 exchange calendars, historical session
+    # schedules with open/close times (including early closes). vectorbtpro's
+    # own utils/sessions.py already requires it; we wrap it for get_trading_sessions.
+    "pandas-market-calendars>=4.0.0",
 ]
 [[project.authors]]
 name = "Massive"

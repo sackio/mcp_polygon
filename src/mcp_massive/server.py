@@ -10,6 +10,7 @@ from urllib.parse import unquote, urlparse, parse_qs
 
 import certifi
 import httpx
+import pandas_market_calendars as mcal
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.utilities.func_metadata import ArgModelBase
 from mcp.server.transport_security import TransportSecuritySettings
@@ -569,6 +570,55 @@ async def get_market_status(
 
         data_str = results.data.decode("utf-8")
         return json.loads(data_str)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_trading_calendars() -> Dict[str, Any]:
+    """
+    List every exchange/market calendar name available to get_trading_sessions
+    (powered by `pandas_market_calendars` — 211 calendars as of this writing:
+    NYSE, NASDAQ, 24/5, 24/7, and many international/futures exchanges).
+    """
+    try:
+        return {"calendars": mcal.get_calendar_names()}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_trading_sessions(
+    start_date: str,
+    end_date: str,
+    calendar: str = "NYSE",
+) -> Dict[str, Any]:
+    """
+    Get trading session open/close times for an exchange calendar over a date
+    range, historical or future — powered by `pandas_market_calendars`, not
+    Massive's own data (pure local computation, no API call). Use
+    list_trading_calendars for valid `calendar` names.
+
+    This is a different question from get_market_status ("is the market open
+    right now") and get_market_holidays ("what holidays are coming up"):
+    this answers "which sessions existed between two dates, and what time did
+    each open and close" — the thing a backtest needs to tell a missing bar
+    from a market closure. Early closes appear as a session with a shortened
+    market_close, not as a separate flag — check the actual times, don't
+    assume every returned date is a full session.
+    """
+    try:
+        cal = mcal.get_calendar(calendar)
+        schedule = cal.schedule(start_date=start_date, end_date=end_date)
+        sessions = [
+            {
+                "date": idx.strftime("%Y-%m-%d"),
+                "market_open": row["market_open"].isoformat(),
+                "market_close": row["market_close"].isoformat(),
+            }
+            for idx, row in schedule.iterrows()
+        ]
+        return {"calendar": calendar, "session_count": len(sessions), "sessions": sessions}
     except Exception as e:
         return {"error": str(e)}
 
