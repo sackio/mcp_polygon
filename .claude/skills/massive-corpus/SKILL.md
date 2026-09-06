@@ -20,6 +20,15 @@ Call `get_*_file_info` first (row count, row-group count, schema — cheap, no d
 `read_*_rows(row_group=N, columns=[...], limit=..., offset=...)`. `limit` is capped at 20,000
 server-side regardless of what you ask for.
 
+⛔ **`list_corpus_lanes`'s `span` end is live-checked; `days`/`rows` are NOT.** Fixed
+2026-09-06 after the previous hardcoded end dates (stale since 2026-08-24) got read as a
+real 2-week ingestion stall on `global_crypto` and reported as fact to two consumers and
+Ben — quantum-data checked the actual files and found no gap at all. `span[1]` is now
+verified against the filesystem on every call (`end_live_verified` says whether that check
+found anything); `days`/`rows` are still a static baseline from
+`days_rows_baseline_measured_at` (recomputing exact counts means reading every file) —
+don't read those two as current.
+
 ## Schema gotchas — measured, not documented anywhere else
 
 - `conditions` is a **comma-joined string** (`"12,37"`), not an int array. Split it yourself.
