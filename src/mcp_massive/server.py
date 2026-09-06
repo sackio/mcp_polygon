@@ -544,7 +544,7 @@ async def get_snapshot_crypto_book(
 @poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
 async def get_market_holidays(
     params: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Get upcoming market holidays and their open/close times.
     """
