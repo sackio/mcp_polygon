@@ -26,6 +26,7 @@ projection — there is no "read the whole file" tool, deliberately.
 """
 import os
 import sys
+from datetime import date as _date, timedelta as _timedelta
 from typing import Any, Dict, List, Optional
 
 _QFDATA_TOOLS_DIR = "/mnt/nas/data/code/quantum-feed/tools/data"
@@ -53,6 +54,49 @@ LANES = [
     {"cluster": "global_crypto", "lane": "minute_aggs_v1", "span": ["2013-11-04", "2026-08-23"], "days": 4670, "rows": 468593016},
     {"cluster": "benzinga_news_v1", "lane": "news_v1", "span": ["2009-01-01", "2026-08-20"], "days": 6441, "rows": 3553538},
 ]
+
+_LANES_BASELINE_MEASURED_AT = "2026-08-24"
+
+
+def _find_latest_available_date(cluster: str, lane: str, lookback_days: int = 45) -> Optional[str]:
+    """Scan backward from today for the most recent day-file that exists, using
+    the canonical path builder (no second path implementation, per the module
+    docstring's rule). Cheap — os.path.exists only, no data read — so this is
+    safe to run on every list_corpus_lanes call, unlike re-deriving day/row counts.
+
+    Added 2026-09-06 after LANES' hardcoded `span` end dates were mistaken for
+    live coverage (they were 2 weeks stale) and reported to two consumers as a
+    real ingestion stall that did not exist — quantum-data caught it by checking
+    the actual files. This function exists so that mistake can't recur silently:
+    `span[1]` in list_corpus_lanes is now live-verified every call."""
+    today = _date.today()
+    for i in range(lookback_days):
+        d = (today - _timedelta(days=i)).isoformat()
+        try:
+            path = _qf_paths().replay_day(cluster, lane, d)
+        except Exception:
+            continue
+        if os.path.exists(path):
+            return d
+    return None
+
+
+def get_lanes_with_live_span() -> List[Dict[str, Any]]:
+    """LANES with each lane's span END date replaced by a live filesystem check.
+    `days`/`rows` stay as the static baseline from _LANES_BASELINE_MEASURED_AT —
+    recomputing those exactly would mean reading every file. `span[0]` (start)
+    also stays static; corpora only grow forward, so that end doesn't go stale
+    the way the live end did."""
+    lanes = []
+    for lane in LANES:
+        live_end = _find_latest_available_date(lane["cluster"], lane["lane"])
+        entry = dict(lane)
+        entry["span"] = [lane["span"][0], live_end or lane["span"][1]]
+        entry["end_live_verified"] = live_end is not None
+        entry["days_rows_baseline_measured_at"] = _LANES_BASELINE_MEASURED_AT
+        lanes.append(entry)
+    return lanes
+
 
 # RAW-only lanes — no sorted or pivot counterpart, per quantum-data 2026-08-24. All
 # four stopped 2026-06-02.

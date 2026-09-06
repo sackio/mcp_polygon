@@ -2348,12 +2348,17 @@ from . import corpus
 async def list_corpus_lanes() -> Dict[str, Any]:
     """
     List the 8 lanes in quantum-data's sorted flatfile corpus on the NAS
-    (/mnt/nas/data/quantum/replay/ts-sorted), with their date span, day count,
-    and row count as of the last measurement. This is a DIFFERENT corpus from
+    (/mnt/nas/data/quantum/replay/ts-sorted). This is a DIFFERENT corpus from
     the Massive S3 flatfile tools — it is quantum-feed's own ingested, sorted,
     per-day parquet data.
+
+    Each lane's `span` END date is checked live against the filesystem on every
+    call (`end_live_verified` says whether that check found anything). `days`
+    and `rows` are NOT live — they're a static baseline from
+    `days_rows_baseline_measured_at`, since recomputing exact counts means
+    reading every file. Don't read `days`/`rows` as current; do trust `span`.
     """
-    return {"lanes": corpus.LANES}
+    return {"lanes": corpus.get_lanes_with_live_span()}
 
 
 @poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
