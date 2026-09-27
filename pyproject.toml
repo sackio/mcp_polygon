@@ -23,6 +23,8 @@ dependencies = [
     # schedules with open/close times (including early closes). vectorbtpro's
     # own utils/sessions.py already requires it; we wrap it for get_trading_sessions.
     "pandas-market-calendars>=4.0.0",
+    "nats-py>=2.16.0",
+    "msgpack>=1.2.2",
 ]
 [[project.authors]]
 name = "Massive"

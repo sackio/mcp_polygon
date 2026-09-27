@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run the MCP Massive server with streamable-http transport on 0.0.0.0:24400."""
+import asyncio
 import os
 import sys
 import uvicorn
@@ -16,7 +17,21 @@ else:
     # Fallback to current directory
     sys.path.insert(0, current_dir)
 
-from mcp_massive import server
+from mcp_massive import server, live_ingest
+
+
+async def _main() -> None:
+    # live_ingest's NATS subscriber is started here (once, for the process's
+    # life) rather than via FastMCP's own lifespan hook — that hook is
+    # per-MCP-session, and this is a fleet-shared feed with exactly one
+    # subscriber, not one per connecting client.
+    asyncio.create_task(live_ingest.run_forever())
+
+    app = server.get_asgi_app("streamable-http")
+    config = uvicorn.Config(app, host="0.0.0.0", port=24400)
+    uvicorn_server = uvicorn.Server(config)
+    await uvicorn_server.serve()
+
 
 if __name__ == "__main__":
     api_key = os.environ.get("MASSIVE_API_KEY", "") or os.environ.get("POLYGON_API_KEY", "")
@@ -25,7 +40,4 @@ if __name__ == "__main__":
     else:
         print("Starting Massive MCP server with API key configured on 0.0.0.0:24400")
 
-    # Get the ASGI app and run with uvicorn
-    # streamable-http transport — SSE doesn't work with Claude Code's MCP client
-    app = server.get_asgi_app("streamable-http")
-    uvicorn.run(app, host="0.0.0.0", port=24400)
+    asyncio.run(_main())

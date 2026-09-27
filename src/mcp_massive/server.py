@@ -2582,6 +2582,111 @@ async def get_earnings_calendar(ticker: Optional[str] = None, as_of: Optional[st
     return earnings_cache.get_earnings_calendar(ticker, as_of)
 
 
+# Live NATS bar system (quantum-engine) — push, not poll. Ben's directive
+# 2026-09-21: this is the only real-time data path going forward; see
+# .claude/skills/massive-live/SKILL.md for the wire protocol this reads.
+# quantum-engine owns the engine itself; this seat owns consumption of it.
+from . import live_ingest
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_live_bar(spec_id: str, ticker: str) -> Dict[str, Any]:
+    """
+    Latest cached bar for one (spec_id, ticker) from quantum-engine's live NATS
+    feed — push, not REST poll. `found: false` means no bar has arrived on
+    this subject since this MCP process last connected, which has 4 possible
+    causes (quiet market, pod restarted too recently, spec not placed, broker
+    unreachable) — see list_live_specs before concluding the spec is dead.
+
+    `unreliable: true` means `ticker` is one of the 23 cross-asset roster
+    names (AAPL, MSFT, SPY, the sector ETFs, etc.) on a non-cross-asset spec —
+    single-ticker bars on these names can disagree on close price by tens of
+    bps across shards with no client-side fix. Use REST
+    (get_snapshot_ticker/get_last_trade) or a stage1_cross_asset spec instead.
+
+    `evaluable: false` means oc_absent is set — open/close on this bar are
+    literal 0.0 sentinels, not real prices.
+    """
+    return live_ingest.get_bar(spec_id, ticker)
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_live_history(spec_id: str, ticker: str, limit: int = 100) -> Dict[str, Any]:
+    """
+    Recent bars for one (spec_id, ticker) from this process's in-memory
+    rolling cache (bounded to the last 500 bars per key — older bars are gone,
+    not archived; use the corpus/replay tools for anything historical).
+    """
+    return live_ingest.get_history(spec_id, ticker, limit)
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_live_specs() -> Dict[str, Any]:
+    """
+    The last self-description received from each live quantum-engine shard
+    instance (market.meta.engine.>, republished every heartbeat_secs). Per
+    instance: schema_id, specs (5-key breakdown — stage1_disjoint,
+    stage1_cross_asset, stage2, refused, deferred; placed_count is the union
+    of the three stage arrays, there is no literal "placed" key on the wire),
+    universe (a SNAPSHOT of symbols printed since that instance started, NOT
+    an allow-list of covered tickers), and requests (how to ask
+    quantum-engine for a new spec — an ATC DM, per the engine's own
+    self-description).
+
+    Empty `instances` means no self-description has arrived yet — that's a
+    connectivity/startup question, not evidence the engine is down.
+    """
+    return live_ingest.get_specs_snapshot()
+
+
+@poly_mcp.tool()
+async def register_live_alert(
+    condition: Dict[str, Any],
+    notify_to: str,
+    owner: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Register a persistent alert against the live engine feed, evaluated in
+    this MCP server process and delivered to `notify_to` (an ATC address, e.g.
+    "slack:U..." or an agent name) via an ATC DM when it fires. Survives an
+    MCP server restart — the registry is on disk, not just in memory.
+
+    `condition` is one of:
+      {"kind": "threshold", "spec_id": ..., "ticker": ..., "field": "close",
+       "op": ">", "value": ...} — field is one of open/high/low/close/volume/
+      trade_count; op is one of >, <, >=, <=, ==, !=.
+      {"kind": "engine_health", "max_silence_seconds": ..., "instance": ...}
+      — "instance" is optional; omit to watch every instance seen so far.
+
+    Edge-triggered: fires once when the condition first becomes true, not
+    again on every subsequent bar — it re-arms only after the condition goes
+    false again. `owner` defaults to `notify_to`; pass it separately if the
+    alert should be listed/cancelled by someone other than who gets notified.
+    """
+    try:
+        return live_ingest.register_alert(condition, notify_to, owner)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_my_live_alerts(owner: str) -> Dict[str, Any]:
+    """
+    List this owner's active (non-cancelled) live alerts, with their current
+    armed/fired state and fire count.
+    """
+    return {"owner": owner, "alerts": live_ingest.list_alerts(owner)}
+
+
+@poly_mcp.tool()
+async def cancel_live_alert(alert_id: str) -> Dict[str, Any]:
+    """
+    Cancel a live alert by id. Idempotent — cancelling an already-cancelled or
+    unknown id returns cancelled: false rather than erroring.
+    """
+    return live_ingest.cancel_alert(alert_id)
+
+
 # ── Massive generic REST proxy (search_endpoints / call_api / query_data) ──
 # Adopted verbatim from upstream massive-com/mcp_massive 2026-08-24, alongside
 # (not replacing) the explicit per-endpoint tools above — see CLAUDE.md.
