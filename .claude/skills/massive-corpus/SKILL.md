@@ -9,6 +9,18 @@ quantum-data's corpus, reachable through the massive/polygon MCP (`mcp__polygon_
 in **three forms** with different tools and different coverage. Pick the right one before
 calling anything.
 
+⛔⛔ **A TOOL FAILURE HERE IS NOT A DATA-ABSENCE CLAIM — DO NOT CONFLATE THEM.** Confirmed
+2026-09-26: this MCP's corpus tools (`get_corpus_file_info` etc.) can fail entirely (measured:
+`ModuleNotFoundError: No module named 'qfdata'`, a stale import path in this fork, unrelated to
+the data) while the underlying parquet files are completely fine and directly readable — a
+consumer with NAS access can read `/mnt/nas/data/quantum/replay/ts-sorted/<cluster>/<lane>/
+<YYYY>/<MM>/<DD>.parquet` (this is the real path SHAPE — one file per day, not a single dated
+filename) with their own parquet reader, no MCP tool required, whenever this seat's tool
+wrapper is down. **"The corpus tool is broken" and "the corpus is unusable" are different
+claims** — saying the wrong one caused a real consumer to nearly re-download ~150GB of
+flatfiles that were already on the NAS. Check tool-vs-data separately before answering "do we
+have X" while this MCP's own corpus tools are erroring.
+
 | form | tools | scope | when |
 |---|---|---|---|
 | **SORTED** | `list_corpus_lanes`, `resolve_corpus_path`, `get_corpus_file_info`, `read_corpus_rows` | whole market, per-day, ts-ordered | you need a full day's cross-sectional data, or order matters |
@@ -39,13 +51,22 @@ don't read those two as current.
   decoding bug. Filter before computing spread (see `massive-microstructure`).
 - Corpus data is **raw, unadjusted** for splits/dividends. See `massive-adjustments`.
 - PIVOT's canonical path builder (`qfdata.paths.zticker_partition`) only covers
-  `us_stocks_sip` — there is no per-cluster pivot for other markets, and `resolve_pivot_path`
-  takes no `cluster` argument at all — it's implicit. ⛔ **Passing a non-`us_stocks_sip` ticker
-  (e.g. a crypto ticker like `X:BTC-USD`) does NOT error** — it silently builds a
-  `us_stocks_sip/...` path anyway and returns `exists:false`, which reads exactly like "no
-  data for this date" rather than "wrong cluster, PIVOT doesn't cover this." Confirmed
-  2026-08-31. For crypto (or any non-`us_stocks_sip` cluster), stay on SORTED whole-market day
-  files and filter by ticker yourself.
+  `us_stocks_sip`, and `resolve_pivot_path` takes no `cluster` argument at all — it's
+  implicit. ⛔ **Passing a non-`us_stocks_sip` ticker (e.g. a crypto ticker like
+  `X:BTC-USD`) does NOT error** — it silently builds a `us_stocks_sip/...` path anyway and
+  returns `exists:false`, which reads exactly like "no data for this date" rather than
+  "wrong cluster, the tool doesn't cover this." Confirmed 2026-08-31.
+  ⚠️ **THE TOOL'S LIMIT IS NOT THE DATA'S LIMIT — this line used to say it was.** It read
+  "there is no per-cluster pivot for other markets", and that is FALSE. Measured 2026-09-21
+  by quantum-data: `zticker/global_crypto/minute_aggs_v1` and `zticker/global_crypto/trades_v1`
+  each hold **1,016 `ticker=` partitions**, and the newest `X:BTC-USD` file (2026-09-20) is
+  two days AHEAD of the newest `us_stocks_sip` AAPL file (2026-09-18). The crypto pivot
+  exists, is current, and is maintained.
+  ⇒ For crypto, read it DIRECTLY at
+  `/mnt/nas/data/quantum/zticker/global_crypto/<lane>/ticker=<TICKER>/year_month=<YYYY-MM>/<YYYY-MM-DD>.parquet`
+  rather than falling back to a multi-GB SORTED whole-market day file and filtering — that
+  fallback is what this line used to recommend and it costs gigabytes for one ticker.
+  `resolve_pivot_path` still cannot build that path for you; construct it yourself.
 - ⛔ **No crypto quotes lane exists anywhere** — not SORTED, not flatfiles, not REST. Confirmed
   2026-08-31: `global_crypto` only has `day_aggs_v1`/`minute_aggs_v1`/`trades_v1`. A genuine
   vendor gap, not an ingestion gap — quantum-data never had this to ingest.
@@ -79,6 +100,21 @@ don't read those two as current.
   corrupt data) or silently coerces (code assuming `id` is numeric breaks quietly once PIVOT
   flips it to string). Cast explicitly per-file before concatenating; never assume one dtype
   holds across years, and never assume SORTED's drift dates apply to PIVOT or vice versa.
+
+## ⛔⛔ PIVOT does NOT share SORTED's 2003-09-10 floor for `minute_aggs_v1`
+
+Measured 2026-09-27 by tradedesk-11, confirmed independently by this seat: PIVOT
+`us_stocks_sip/minute_aggs_v1` starts **2015-01** for every ticker sampled (AAPL, SPY, QQQ, IBM,
+GE, MSFT — all 141 months 2015-01..2026-09, none earlier; a direct `get_pivot_file_info` check
+for AAPL 2010-06-15 returns `No file at ...`, 2015-01-05 exists). **SORTED reaches 2003-09-10 for
+the same lane** (`ts-sorted/us_stocks_sip/minute_aggs_v1/2003/09/10.parquet` exists) — this seat
+previously said both forms "share the same 2003-09-10 vendor floor," which is wrong for PIVOT.
+⇒ For a pre-2015 intraday need, SORTED (whole-market, ~53MB/~1.85M rows per day) is the only
+lane — a bulk scan, not a targeted per-ticker read, a different cost class than the
+daily-gap-screen-then-PIVOT pattern this skill recommends elsewhere, which only holds
+2015-onward. Whether the 2015 floor is an ingestion boundary that could be backfilled, or
+intentional, and whether a coarser pre-2015 whole-market aggregate exists — **not yet
+answered**, ask quantum-data.
 
 ## Building a continuous per-ticker series
 
