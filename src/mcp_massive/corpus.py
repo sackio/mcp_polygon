@@ -105,28 +105,23 @@ def _find_latest_available_date(cluster: str, lane: str, lookback_days: int = 45
     return {"date": None, "checked": True, "error": None}
 
 
-def _retired_lanes() -> Dict[Tuple[str, str], str]:
-    """quantum-feed's own retirement ledger (`ingest/lanes.py::RETIRED_LANES`),
-    keyed `(cluster, lane)` -> operator-ruling reason string. Imported, not
-    duplicated, same rule as the path builders above — a second copy of an
-    operator ruling is how it drifts. Added 2026-09-27 per quantum-data: without
-    this, a retired lane's live-span check ages out of its 45-day lookback and
-    starts reporting `end_live_verified: false`, which reads as a fresh ingestion
-    stall rather than the intentional stop it actually is (benzinga_news_v1
-    retired 2026-08-21, us_indices retired 2026-09-01 — see the ledger for the
-    quoted rulings). Fails toward an EMPTY dict on import error — same direction
-    as quantum-feed's own `census_liveness.py` uses for this same import: an
-    unreadable ruling must not silently mark something retired that isn't, so a
-    lookup failure here just means every lane still gets a normal live check."""
+def _stopped_lanes() -> set:
+    """`(cluster, lane)` keys to skip the live-span scan for, quietly — no status
+    field or reason is surfaced to callers (Ben's instruction 2026-09-27: don't
+    expose this at all, it reads as broken to agents who have no reason to care
+    and get news through REST anyway). Sourced from quantum-feed's own
+    `ingest/lanes.py::RETIRED_LANES`, not duplicated. Fails toward an EMPTY set
+    on import error, so a lookup failure just means every lane gets a normal
+    (harmless, if occasionally slow) live check rather than any status claim."""
     ingest_dir = os.path.join(_QFDATA_TOOLS_DIR, "ingest")
     try:
         if ingest_dir not in sys.path:
             sys.path.insert(0, ingest_dir)
         from lanes import RETIRED_LANES  # noqa: PLC0415
-        return dict(RETIRED_LANES)
+        return set(RETIRED_LANES)
     except Exception as e:
-        logger.warning("corpus: RETIRED_LANES import failed, no lane will be reported retired: %s", e)
-        return {}
+        logger.warning("corpus: RETIRED_LANES import failed, every lane will get a normal live check: %s", e)
+        return set()
 
 
 def get_lanes_with_live_span() -> List[Dict[str, Any]]:
@@ -136,23 +131,16 @@ def get_lanes_with_live_span() -> List[Dict[str, Any]]:
     also stays static; corpora only grow forward, so that end doesn't go stale
     the way the live end did.
 
-    A RETIRED lane (operator ruling, not an ingestion stall) skips the live scan
-    entirely — its static `span[1]` baseline is already its true final date,
-    since nothing further will ever land — and carries `retired`/`retired_reason`
-    instead of a `end_live_verified` that would otherwise flip to false as the
-    45-day lookback ages past that final file."""
-    retired = _retired_lanes()
+    A stopped lane (operator ruling, not an ingestion stall) skips the live scan
+    silently — its static `span[1]` baseline is already its true final date,
+    since nothing further will land — with no status field exposed either way."""
+    stopped = _stopped_lanes()
     lanes = []
     for lane in LANES:
         key = (lane["cluster"], lane["lane"])
         entry = dict(lane)
         entry["days_rows_baseline_measured_at"] = _LANES_BASELINE_MEASURED_AT
-        if key in retired:
-            entry["retired"] = True
-            entry["retired_reason"] = retired[key]
-            entry["end_live_verified"] = None
-        else:
-            entry["retired"] = False
+        if key not in stopped:
             check = _find_latest_available_date(lane["cluster"], lane["lane"])
             entry["span"] = [lane["span"][0], check["date"] or lane["span"][1]]
             entry["end_live_verified"] = check["date"] is not None if check["checked"] else None
