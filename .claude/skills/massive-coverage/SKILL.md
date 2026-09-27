@@ -79,20 +79,18 @@ assume index-level history goes back as far as the minute-bar history.
 Real floor 2009-09-25 04:00 UTC (measured 2026-09-27 on `C:EURUSD` minute bars — genuinely zero
 rows before that instant), matching a long-standing but previously unverified desk note.
 
-⛔⛔ **No aggregate bucket strictly between 1 minute and 1 day works for this ticker class —
-confirmed a real vendor gap, not a UTC-alignment issue.** `timespan="hour"` (multiplier 1 or 4)
-AND `timespan="minute", multiplier=60` all return `resultsCount:0` for `C:EURUSD` on a real
-trading date despite `queryCount` showing real base bars scanned — the same silent-empty
-pattern as memo `44612fa4`. Native `timespan="minute", multiplier=1` and `timespan="day"` both
-work fine on the identical ticker/date. Confirmed identically on spot gold `C:XAUUSD`: daily
-real, 30-minute and hourly both empty, 1-minute real (reachable to at least 2010-01-01,
-spot-checked against real prices). This is specific to forex/metals — the same granularities
-work fine on `us_stocks_sip`. ⇒ Pull native 1-minute bars and resample to whatever size you need
-client-side; don't request a vendor-side hour-scale aggregate for these tickers, it silently
-comes back empty. This also sidesteps the UTC-anchor/NY-session-DST alignment problem for any
-rule defined in New York wall-clock time — convert 1-minute timestamps to `America/New_York`
-with a real tz-aware library before resampling, rather than trusting a fixed offset or a
-vendor-side bucket boundary.
+⛔⛔ **Hour-scale and 30-minute aggregates work FINE for FX and spot metals — a same-day
+self-correction, kept here as a live example of the trap it actually was.** A first pass
+2026-09-27 used `list_aggs` with a small `limit` (5-10) on `timespan="hour"`/`minute×60`/
+`minute×30` for `C:EURUSD` and `C:XAUUSD`, got `resultsCount:0` every time, and wrongly
+concluded the aggregation was broken for this ticker class. It was the already-catalogued
+`limit` trap (memo `44612fa4`): `limit` caps SCANNED BASE BARS, not returned output buckets —
+with `timespan="minute"` as the underlying granularity, `limit=5` scans 5 *minutes* of data,
+nowhere near enough to complete even one hour-scale bucket, so the aggregation correctly
+returns nothing. Re-run with `limit=50000`: `C:EURUSD` hour/1 on 2024-01-02 → 24 real bars;
+`C:XAUUSD` minute/30 over 2024-01-01..05 → 187 real bars. Both fine. ⇒ Whenever `resultsCount`
+is 0 but `queryCount` is nonzero and small, that is the `limit` trap, not a coverage gap — raise
+`limit` before concluding anything is missing, on ANY ticker class, not just this one.
 
 ## Crypto (`global_crypto`)
 
