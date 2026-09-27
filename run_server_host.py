@@ -17,15 +17,19 @@ else:
     # Fallback to current directory
     sys.path.insert(0, current_dir)
 
-from mcp_massive import server, live_ingest
+from mcp_massive import server, live_ingest, mind_ingest
 
 
 async def _main() -> None:
-    # live_ingest's NATS subscriber is started here (once, for the process's
-    # life) rather than via FastMCP's own lifespan hook — that hook is
-    # per-MCP-session, and this is a fleet-shared feed with exactly one
-    # subscriber, not one per connecting client.
+    # live_ingest's NATS subscriber and mind_ingest's SSE/jsonl consumers are
+    # started here (once, for the process's life) rather than via FastMCP's
+    # own lifespan hook — that hook is per-MCP-session, and these are
+    # fleet-shared feeds with exactly one subscriber each, not one per
+    # connecting client. The two are independent background tasks (separate
+    # reconnect/backoff loops) sharing only the trigger-evaluation layer in
+    # live_ingest.py.
     asyncio.create_task(live_ingest.run_forever())
+    asyncio.create_task(mind_ingest.run_forever())
 
     app = server.get_asgi_app("streamable-http")
     config = uvicorn.Config(app, host="0.0.0.0", port=24400)

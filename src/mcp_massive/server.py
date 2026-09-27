@@ -2657,11 +2657,31 @@ async def register_live_alert(
       trade_count; op is one of >, <, >=, <=, ==, !=.
       {"kind": "engine_health", "max_silence_seconds": ..., "instance": ...}
       — "instance" is optional; omit to watch every instance seen so far.
+      {"kind": "trigger", "source": ..., "tickers": [...], "expr": "...",
+       "spec_id": ..., "event_type": ...} — the generalized form. `source` is
+      one of quantum_bar/quantum_trade/quantum_quote/quantum_tape/mind_sse/
+      mind_earnings_push. `tickers` is a required, non-empty list — every
+      trigger must be scoped, never registered against "anything". `spec_id`
+      is required only when source is quantum_bar. `event_type` is optional
+      (tape events only — filters the six detector kinds sweep/absorption/
+      iceberg/queue_depletion/block/flicker client-side, since one NATS
+      subject carries all six together). `expr` is a restricted expression
+      (simpleeval's EvalWithCompoundTypes — comparisons, boolean logic, `in`,
+      list/dict literals; no attribute access, no imports, no function calls)
+      evaluated against that source's field names — see the massive-triggers
+      skill for the exact field set per source and the traps in each (a tape
+      event's price field means four different things depending on kind; a
+      None field means "ungraded", not zero; ticker registration is
+      auto-normalized the same way the wire sanitizes symbols, e.g. "BRK.B"
+      -> "BRK-B"). A pathologically slow or permanently-broken expr
+      auto-disables itself with a one-time notification rather than
+      silently degrading every other registered trigger.
 
     Edge-triggered: fires once when the condition first becomes true, not
-    again on every subsequent bar — it re-arms only after the condition goes
-    false again. `owner` defaults to `notify_to`; pass it separately if the
-    alert should be listed/cancelled by someone other than who gets notified.
+    again on every subsequent event — it re-arms only after the condition
+    goes false again. `owner` defaults to `notify_to`; pass it separately if
+    the alert should be listed/cancelled by someone other than who gets
+    notified.
     """
     try:
         return live_ingest.register_alert(condition, notify_to, owner)

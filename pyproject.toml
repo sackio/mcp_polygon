@@ -25,6 +25,10 @@ dependencies = [
     "pandas-market-calendars>=4.0.0",
     "nats-py>=2.16.0",
     "msgpack>=1.2.2",
+    # restricted expression evaluator for the generalized live-trigger API
+    # (register_live_alert's "trigger" condition kind) — never eval()/exec()
+    # on an agent-submitted expr in this shared process.
+    "simpleeval>=1.0.3",
 ]
 [[project.authors]]
 name = "Massive"

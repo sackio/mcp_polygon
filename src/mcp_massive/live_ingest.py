@@ -23,6 +23,7 @@ cross-asset spec (checked against the live self-description's own
 `specs.stage1_cross_asset`, never a hardcoded spec-id list — the skill is
 explicit that spec-id membership changes with every engine image).
 """
+import ast
 import asyncio
 import json
 import logging
@@ -38,6 +39,7 @@ from typing import Any, Deque, Dict, List, Optional, Tuple
 import httpx
 import msgpack
 import nats
+from simpleeval import EvalWithCompoundTypes, FeatureNotAvailable, NameNotDefined
 
 logger = logging.getLogger("mcp_massive.live_ingest")
 
@@ -75,6 +77,28 @@ _OPS = {
     "<=": operator.le, "==": operator.eq, "!=": operator.ne,
 }
 
+# v1 generalized trigger API (Ben, #massive 2026-09-27, plan
+# https://atc.sack.io/f/up-1ccffa2f7cf6b7a981c9f7ab13debc53) — a third condition
+# kind alongside threshold/engine_health, evaluating an arbitrary restricted
+# expression against a normalized event envelope from any of five sources.
+_TRIGGER_SOURCES = {"quantum_bar", "quantum_trade", "quantum_quote", "quantum_tape", "mind_sse", "mind_earnings_push"}
+_TRIGGER_EVAL_MAX_SECONDS = float(os.environ.get("MASSIVE_LIVE_TRIGGER_EVAL_MAX_SECONDS", "0.05"))
+# A single raise is usually normal (e.g. `strength > 0.5` on a tape kind that
+# doesn't grade — see the tape section below), not evidence the expr is
+# broken — only disable after this many CONSECUTIVE raises with zero
+# successful evaluations between them, which means every event this trigger
+# has ever seen failed the same way (a typo'd field name, not a None).
+_TRIGGER_MAX_CONSECUTIVE_ERRORS = 20
+
+
+def _sanitize_ticker(ticker: str) -> str:
+    """Match the wire's own subject sanitization so a trigger registered
+    against "BRK.B" still matches the "BRK-B" subject/symbol it will actually
+    see — a dot in a NATS subject token splits it into extra tokens and a `*`
+    wildcard stops matching, which is why quantum-engine sanitizes at publish
+    time (massive-live skill / quantum-engine's wire audit, 2026-09-27)."""
+    return ticker.replace(".", "-")
+
 
 class _LiveState:
     def __init__(self) -> None:
@@ -94,6 +118,15 @@ _state = _LiveState()
 # hot bar path never touches SQLite.
 _threshold_index: Dict[Tuple[str, str], List[dict]] = {}
 _engine_health_alerts: List[dict] = []
+# (source, ticker) -> [trigger alert row, ...] — the generalized "trigger" kind.
+# A quantum_bar trigger also carries its own spec_id inside condition and is
+# filtered on it inline (see _evaluate_trigger_alerts) rather than folded into
+# the key, so one index shape covers every source.
+_trigger_index: Dict[Tuple[str, str], List[dict]] = {}
+# alert_id -> consecutive-raise counter, reset to 0 on any successful
+# evaluation. In-memory only — a restart re-arms every trigger's counter,
+# which is fine, this is a resource-pathology guard, not a durable record.
+_trigger_error_counts: Dict[str, int] = {}
 
 _db_conn: Optional[sqlite3.Connection] = None
 
@@ -139,14 +172,49 @@ def _validate_condition(condition: Dict[str, Any]) -> None:
     elif kind == "engine_health":
         if "max_silence_seconds" not in condition:
             raise ValueError("engine_health condition requires max_silence_seconds")
+    elif kind == "trigger":
+        missing = [k for k in ("source", "tickers", "expr") if k not in condition]
+        if missing:
+            raise ValueError(f"trigger condition missing required key(s): {missing}")
+        if condition["source"] not in _TRIGGER_SOURCES:
+            raise ValueError(f"source must be one of {sorted(_TRIGGER_SOURCES)}, got {condition['source']!r}")
+        if condition["source"] == "quantum_bar" and "spec_id" not in condition:
+            raise ValueError("trigger condition on source='quantum_bar' requires spec_id")
+        tickers = condition.get("tickers")
+        if not isinstance(tickers, list) or not tickers:
+            raise ValueError("tickers must be a non-empty list — every trigger must be scoped, never unscoped")
+        condition["tickers"] = [_sanitize_ticker(t) for t in tickers]
+        try:
+            ast.parse(condition["expr"], mode="eval")
+        except SyntaxError as e:
+            raise ValueError(f"expr is not a valid expression: {e}")
+        # Feature-check against the SAME evaluator class used at event time
+        # (EvalWithCompoundTypes, not plain simpleeval — that distinction is
+        # exactly what would otherwise let a syntactically valid expr like
+        # `ticker in ['NVDA','AMD']` pass registration silently and then fail
+        # (and eventually auto-disable) on every single real event, since
+        # plain simple_eval rejects list literals outright. No real field
+        # names exist yet at registration time, so NameNotDefined here is
+        # expected and swallowed; FeatureNotAvailable means the expr uses
+        # something this evaluator can never support, regardless of data —
+        # reject it now, not after it's live.
+        try:
+            EvalWithCompoundTypes(names={}).eval(condition["expr"])
+        except FeatureNotAvailable as e:
+            raise ValueError(f"expr uses an unsupported construct: {e}")
+        except NameNotDefined:
+            pass
+        except Exception:
+            pass
     else:
-        raise ValueError(f"unknown condition kind: {kind!r} (expected 'threshold' or 'engine_health')")
+        raise ValueError(f"unknown condition kind: {kind!r} (expected 'threshold', 'engine_health' or 'trigger')")
 
 
 def _load_alerts_into_index() -> None:
-    global _threshold_index, _engine_health_alerts
+    global _threshold_index, _engine_health_alerts, _trigger_index
     threshold_index: Dict[Tuple[str, str], List[dict]] = {}
     engine_health_alerts: List[dict] = []
+    trigger_index: Dict[Tuple[str, str], List[dict]] = {}
     rows = _db().execute(
         "SELECT id, owner, notify_to, condition_json, currently_satisfied FROM live_alerts WHERE cancelled = 0"
     ).fetchall()
@@ -162,10 +230,14 @@ def _load_alerts_into_index() -> None:
         if condition["kind"] == "threshold":
             key = (condition["spec_id"], condition["ticker"])
             threshold_index.setdefault(key, []).append(rec)
+        elif condition["kind"] == "trigger":
+            for ticker in condition["tickers"]:
+                trigger_index.setdefault((condition["source"], ticker), []).append(rec)
         else:
             engine_health_alerts.append(rec)
     _threshold_index = threshold_index
     _engine_health_alerts = engine_health_alerts
+    _trigger_index = trigger_index
 
 
 def register_alert(condition: Dict[str, Any], notify_to: str, owner: Optional[str] = None) -> Dict[str, Any]:
@@ -262,6 +334,73 @@ async def _evaluate_threshold_alerts(key: Tuple[str, str], entry: dict) -> None:
             _set_satisfied(rec, False)
 
 
+async def _disable_pathological_trigger(rec: dict, reason: str) -> None:
+    logger.warning("live_ingest: auto-disabling trigger %s: %s", rec["id"], reason)
+    cancel_alert(rec["id"])
+    await _fire_alert(
+        rec,
+        f"This trigger has been AUTO-DISABLED and will not fire again — re-register if you fix the expr. "
+        f"Reason: {reason}",
+    )
+
+
+async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optional[str], fields: Dict[str, Any]) -> None:
+    """The generalized 'trigger' condition kind — evaluates `condition["expr"]`
+    (a simpleeval-restricted expression, never eval()/exec()) against exactly
+    `fields`, nothing else in scope: no attribute access, no imports, no
+    comprehensions/loops, per the plan's safety requirement (this runs inside
+    the one shared FastMCP process every seat's tool calls go through).
+
+    A RAISE during evaluation (e.g. `strength > 0.5` on a tape kind that
+    doesn't grade, where `strength` is None) is normal and expected for some
+    events on a source with kind-dependent fields — it means "this event
+    doesn't support this expr," not "this expr is broken." Only
+    _TRIGGER_MAX_CONSECUTIVE_ERRORS raises IN A ROW with no successful
+    evaluation between them (every event this trigger has ever seen failed
+    the same way — a typo'd field name, never a real one) gets auto-disabled.
+    A slow evaluation (over _TRIGGER_EVAL_MAX_SECONDS) is disabled immediately,
+    on the first occurrence — that is a real resource-pathology signal, not a
+    per-event data question."""
+    for rec in _trigger_index.get((source, ticker), []):
+        condition = rec["condition"]
+        if condition.get("event_type") and condition["event_type"] != event_type:
+            continue
+        if source == "quantum_bar" and condition.get("spec_id") and fields.get("spec_id") != condition["spec_id"]:
+            continue
+        t0 = time.monotonic()
+        try:
+            result = EvalWithCompoundTypes(names=fields).eval(condition["expr"])
+        except Exception as e:
+            elapsed = time.monotonic() - t0
+            if elapsed > _TRIGGER_EVAL_MAX_SECONDS:
+                await _disable_pathological_trigger(
+                    rec, f"expr raised AND took {elapsed * 1000:.1f}ms (over the {_TRIGGER_EVAL_MAX_SECONDS * 1000:.0f}ms budget): {e}"
+                )
+                _trigger_error_counts.pop(rec["id"], None)
+                continue
+            count = _trigger_error_counts.get(rec["id"], 0) + 1
+            _trigger_error_counts[rec["id"]] = count
+            if count >= _TRIGGER_MAX_CONSECUTIVE_ERRORS:
+                await _disable_pathological_trigger(
+                    rec, f"expr raised on {count} consecutive events with zero successful evaluations: {e}"
+                )
+                _trigger_error_counts.pop(rec["id"], None)
+            continue
+        elapsed = time.monotonic() - t0
+        _trigger_error_counts[rec["id"]] = 0
+        if elapsed > _TRIGGER_EVAL_MAX_SECONDS:
+            await _disable_pathological_trigger(
+                rec, f"expr took {elapsed * 1000:.1f}ms, over the {_TRIGGER_EVAL_MAX_SECONDS * 1000:.0f}ms budget"
+            )
+            continue
+        satisfied = bool(result)
+        if satisfied and not rec["currently_satisfied"]:
+            await _fire_alert(rec, f"{source}/{ticker} matched `{condition['expr']}` — fields={fields}")
+            _set_satisfied(rec, True)
+        elif not satisfied and rec["currently_satisfied"]:
+            _set_satisfied(rec, False)
+
+
 async def _evaluate_engine_health_alerts() -> None:
     if not _engine_health_alerts:
         return
@@ -350,11 +489,75 @@ async def _on_bar(msg) -> None:
         _state.history[key] = hist
     hist.append(entry)
     await _evaluate_threshold_alerts(key, entry)
+    await _evaluate_trigger_alerts("quantum_bar", ticker, None, entry)
+
+
+def _tape_fields(payload: dict) -> Dict[str, Any]:
+    """Resolve TapeEvent's kind-dependent `price` field into an unambiguous
+    name BEFORE any expr sees it — quantum-engine's wire audit (2026-09-27):
+    Sweep/Block carry a real trade price, Absorption the quote midpoint,
+    Iceberg/QueueDepletion/Flicker a quote level. A generic `price` name would
+    let a trigger silently mix these; each is exposed as its own field, and
+    only the one that applies to this event's `kind` is non-None. `strength`
+    stays None (not coerced to 0) when the detector doesn't grade — see
+    _evaluate_trigger_alerts' docstring for why a raised comparison on that is
+    normal, not a broken expr. `direction`, when present, is always the
+    AGGRESSOR's side, uniformly across every kind that carries one."""
+    kind = payload.get("kind")
+    price = payload.get("price")
+    trade_price = price if kind in ("sweep", "block") else None
+    quote_midpoint = price if kind == "absorption" else None
+    quote_level = price if kind in ("iceberg", "queue_depletion", "flicker") else None
+    return {
+        "kind": kind,
+        "trade_price": trade_price,
+        "quote_midpoint": quote_midpoint,
+        "quote_level": quote_level,
+        "size": payload.get("size"),
+        "strength": payload.get("strength"),
+        "direction": payload.get("direction"),
+        "timestamp_ns": payload.get("timestamp_ns"),
+    }
 
 
 async def _on_event(msg) -> None:
     _state.event_count += 1
     _state.last_event_unix_ns = time.time_ns()
+    parts = msg.subject.split(".", 4)
+    if len(parts) != 5:
+        return
+    _, market, _, source_token, ticker = parts
+    try:
+        payload = msgpack.unpackb(msg.data, raw=False)
+    except Exception as e:
+        logger.warning("live_ingest: msgpack decode failed on event subject %r: %s", msg.subject, e)
+        return
+    if source_token == "trade":
+        fields = {
+            "trade_price": payload.get("price"),
+            "size": payload.get("size"),
+            "conditions": payload.get("conditions"),
+            "exchange": payload.get("exchange"),
+            "timestamp_ns": payload.get("timestamp_ns"),
+        }
+        await _evaluate_trigger_alerts("quantum_trade", ticker, None, fields)
+    elif source_token == "quote":
+        bid, ask = payload.get("bid_price"), payload.get("ask_price")
+        fields = {
+            "bid_price": bid,
+            "ask_price": ask,
+            "bid_size": payload.get("bid_size"),
+            "ask_size": payload.get("ask_size"),
+            "mid_price": (bid + ask) / 2 if bid is not None and ask is not None else None,
+            "timestamp_ns": payload.get("timestamp_ns"),
+        }
+        await _evaluate_trigger_alerts("quantum_quote", ticker, None, fields)
+    elif source_token == "tape":
+        fields = _tape_fields(payload)
+        await _evaluate_trigger_alerts("quantum_tape", ticker, fields["kind"], fields)
+    # agg/index tokens exist on the wire's taxonomy but nothing is currently
+    # configured to publish them (quantum-engine, 2026-09-27) — no handler
+    # needed until that changes.
 
 
 async def _on_indicator(msg) -> None:
@@ -448,6 +651,16 @@ async def run_forever() -> None:
         except Exception:
             logger.exception("live_ingest: connection attempt failed, retrying in 5s")
             await asyncio.sleep(5)
+
+
+async def evaluate_trigger(source: str, ticker: str, event_type: Optional[str], fields: Dict[str, Any]) -> None:
+    """Public entry point for another ingestion module (mind_ingest.py) to run
+    its own normalized events through this same trigger-evaluation/alert-
+    registry machinery, without duplicating it. `source` should be one of
+    "mind_sse"/"mind_earnings_push" — anything registered against a
+    quantum_* source will simply never match mind-sourced events, since the
+    index key is (source, ticker)."""
+    await _evaluate_trigger_alerts(source, ticker, event_type, fields)
 
 
 # --- Read accessors for the MCP tools in server.py ---
