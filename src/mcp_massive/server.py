@@ -2717,6 +2717,49 @@ async def cancel_live_alert(alert_id: str) -> Dict[str, Any]:
     return live_ingest.cancel_alert(alert_id)
 
 
+@poly_mcp.tool()
+async def set_trigger_references(owner: str, ref_key: str, values: Dict[str, float]) -> Dict[str, Any]:
+    """
+    Store per-ticker reference values a trigger's `expr` can read back by
+    name — e.g. a prior-close reference for a price-shock trigger, refreshed
+    daily (Ben, #tradedesk-fundamentals 2026-09-28: "if you need a prior
+    close reference you can set up code to store that for yourself and then
+    get it"). `values` is {ticker: value}, e.g. {"AAPL": 227.55, "MSFT": 510.2}.
+
+    Every trigger owned by `owner` then sees `ref_key` (and
+    `{ref_key}_updated_unix_ns`, for staleness checks) as a plain field
+    alongside the event's own fields, scoped automatically to whichever
+    ticker the firing event is for — no lookup syntax needed in expr:
+
+      set_trigger_references("me", "prior_close", {"AAPL": 227.55})
+      register_live_alert(condition={"kind": "trigger", "source": "quantum_bar",
+        "spec_id": "time_1m", "tickers": ["AAPL"],
+        "expr": "prior_close is not None and abs(close/prior_close - 1) >= 0.20"},
+        notify_to="me")
+
+    `prior_close is not None` guards a ticker you haven't set a value for yet
+    — referencing an unset ref_key without guarding it raises NameNotDefined
+    on that event (handled like any other per-event failure, not special).
+    Re-calling with the same (owner, ref_key, ticker) overwrites the value —
+    there is no history, only the latest. Capped at
+    MASSIVE_LIVE_MAX_REFERENCES_PER_OWNER (default 20000) distinct
+    (ref_key, ticker) pairs per owner.
+    """
+    try:
+        return live_ingest.set_references(owner, ref_key, values)
+    except ValueError as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_trigger_references(owner: str, ref_key: Optional[str] = None) -> Dict[str, Any]:
+    """
+    List this owner's stored trigger reference values, optionally filtered
+    to one ref_key.
+    """
+    return live_ingest.list_references(owner, ref_key)
+
+
 # ── Massive generic REST proxy (search_endpoints / call_api / query_data) ──
 # Adopted verbatim from upstream massive-com/mcp_massive 2026-08-24, alongside
 # (not replacing) the explicit per-endpoint tools above — see CLAUDE.md.

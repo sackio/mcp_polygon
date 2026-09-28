@@ -142,6 +142,15 @@ _trigger_index: Dict[Tuple[str, str], List[dict]] = {}
 # evaluation. In-memory only — a restart re-arms every trigger's counter,
 # which is fine, this is a resource-pathology guard, not a durable record.
 _trigger_error_counts: Dict[str, int] = {}
+# (owner, ticker) -> {ref_key: value, f"{ref_key}_updated_unix_ns": ts, ...} —
+# per-owner reference values (Ben, #tradedesk-fundamentals 2026-09-28: "if you
+# need a prior close reference you can set up code to store that for yourself
+# and then get it"). Bounded by MAX_REFERENCES_PER_OWNER at write time, unlike
+# the 2026-09-28 OOM's unbounded key growth — this key space is entirely
+# driven by explicit, intentional writes from a known set of callers, not by
+# whatever tickers the market happens to print.
+_reference_index: Dict[Tuple[str, str], Dict[str, Any]] = {}
+MAX_REFERENCES_PER_OWNER = int(os.environ.get("MASSIVE_LIVE_MAX_REFERENCES_PER_OWNER", "20000"))
 
 _db_conn: Optional[sqlite3.Connection] = None
 
@@ -165,6 +174,18 @@ def _db() -> sqlite3.Connection:
                 fire_count INTEGER NOT NULL DEFAULT 0,
                 currently_satisfied INTEGER NOT NULL DEFAULT 0,
                 cancelled INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        _db_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trigger_references (
+                owner TEXT NOT NULL,
+                ref_key TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                value REAL NOT NULL,
+                updated_unix_ns INTEGER NOT NULL,
+                PRIMARY KEY (owner, ref_key, ticker)
             )
             """
         )
@@ -253,6 +274,75 @@ def _load_alerts_into_index() -> None:
     _threshold_index = threshold_index
     _engine_health_alerts = engine_health_alerts
     _trigger_index = trigger_index
+
+
+def _load_references_into_index() -> None:
+    global _reference_index
+    index: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    rows = _db().execute("SELECT owner, ref_key, ticker, value, updated_unix_ns FROM trigger_references").fetchall()
+    for owner, ref_key, ticker, value, updated_unix_ns in rows:
+        entry = index.setdefault((owner, ticker), {})
+        entry[ref_key] = value
+        entry[f"{ref_key}_updated_unix_ns"] = updated_unix_ns
+    _reference_index = index
+
+
+def set_references(owner: str, ref_key: str, values: Dict[str, float]) -> Dict[str, Any]:
+    """Bulk upsert (owner, ref_key, ticker) -> value, e.g. set_references(
+    "tradedesk.fundamentals", "prior_close", {"AAPL": 227.55, "MSFT": 510.2}).
+    Every trigger `expr` owned by `owner` then sees `prior_close` (and
+    `prior_close_updated_unix_ns`, for callers who want to guard staleness
+    themselves) as a plain field alongside the event's own fields, scoped to
+    the ticker that event is for — see _evaluate_trigger_alerts. Re-calling
+    with the same (owner, ref_key, ticker) overwrites the value; there is no
+    history, only the latest."""
+    if not values:
+        raise ValueError("values must be a non-empty {ticker: value} dict")
+    sanitized = {_sanitize_ticker(t): v for t, v in values.items()}
+    conn = _db()
+    existing = conn.execute(
+        "SELECT COUNT(*) FROM trigger_references WHERE owner = ?", (owner,)
+    ).fetchone()[0]
+    new_keys = sum(
+        1
+        for t in sanitized
+        if not conn.execute(
+            "SELECT 1 FROM trigger_references WHERE owner = ? AND ref_key = ? AND ticker = ?", (owner, ref_key, t)
+        ).fetchone()
+    )
+    if existing + new_keys > MAX_REFERENCES_PER_OWNER:
+        raise ValueError(
+            f"would exceed MAX_REFERENCES_PER_OWNER ({MAX_REFERENCES_PER_OWNER}) for owner {owner!r}: "
+            f"{existing} existing + {new_keys} new"
+        )
+    now_ns = time.time_ns()
+    conn.executemany(
+        "INSERT INTO trigger_references (owner, ref_key, ticker, value, updated_unix_ns) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(owner, ref_key, ticker) DO UPDATE SET value = excluded.value, updated_unix_ns = excluded.updated_unix_ns",
+        [(owner, ref_key, t, v, now_ns) for t, v in sanitized.items()],
+    )
+    conn.commit()
+    _load_references_into_index()
+    return {"owner": owner, "ref_key": ref_key, "count": len(sanitized), "updated_unix_ns": now_ns}
+
+
+def list_references(owner: str, ref_key: Optional[str] = None) -> Dict[str, Any]:
+    conn = _db()
+    if ref_key:
+        rows = conn.execute(
+            "SELECT ref_key, ticker, value, updated_unix_ns FROM trigger_references WHERE owner = ? AND ref_key = ?",
+            (owner, ref_key),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT ref_key, ticker, value, updated_unix_ns FROM trigger_references WHERE owner = ?", (owner,)
+        ).fetchall()
+    return {
+        "owner": owner,
+        "references": [
+            {"ref_key": r[0], "ticker": r[1], "value": r[2], "updated_unix_ns": r[3]} for r in rows
+        ],
+    }
 
 
 def register_alert(condition: Dict[str, Any], notify_to: str, owner: Optional[str] = None) -> Dict[str, Any]:
@@ -404,9 +494,16 @@ async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optiona
             continue
         if source == "quantum_bar" and condition.get("spec_id") and fields.get("spec_id") != condition["spec_id"]:
             continue
+        # `fields` is the SAME dict object for every rec in this loop (built
+        # once by the caller per event) — references are per-OWNER, so they
+        # must go in a fresh dict per rec, never merged into the shared
+        # `fields` itself, or owner A's reference values would leak into
+        # owner B's expr evaluation on the same event.
+        refs = _reference_index.get((rec["owner"], ticker))
+        eval_fields = {**fields, **refs} if refs else fields
         t0 = time.monotonic()
         try:
-            result = EvalWithCompoundTypes(names=fields).eval(condition["expr"])
+            result = EvalWithCompoundTypes(names=eval_fields).eval(condition["expr"])
         except Exception as e:
             elapsed = time.monotonic() - t0
             if elapsed > _TRIGGER_EVAL_MAX_SECONDS:
@@ -432,7 +529,7 @@ async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optiona
             continue
         satisfied = bool(result)
         if satisfied and not rec["currently_satisfied"]:
-            await _fire_alert(rec, f"{source}/{ticker} matched `{condition['expr']}` — fields={fields}")
+            await _fire_alert(rec, f"{source}/{ticker} matched `{condition['expr']}` — fields={eval_fields}")
             _set_satisfied(rec, True)
         elif not satisfied and rec["currently_satisfied"]:
             _set_satisfied(rec, False)
@@ -576,6 +673,7 @@ async def _on_event(msg) -> None:
         return
     if source_token == "trade":
         fields = {
+            "ticker": ticker,
             "trade_price": payload.get("price"),
             "size": payload.get("size"),
             "conditions": payload.get("conditions"),
@@ -586,6 +684,7 @@ async def _on_event(msg) -> None:
     elif source_token == "quote":
         bid, ask = payload.get("bid_price"), payload.get("ask_price")
         fields = {
+            "ticker": ticker,
             "bid_price": bid,
             "ask_price": ask,
             "bid_size": payload.get("bid_size"),
@@ -596,6 +695,7 @@ async def _on_event(msg) -> None:
         await _evaluate_trigger_alerts("quantum_quote", ticker, None, fields)
     elif source_token == "tape":
         fields = _tape_fields(payload)
+        fields["ticker"] = ticker
         await _evaluate_trigger_alerts("quantum_tape", ticker, fields["kind"], fields)
     # agg/index tokens exist on the wire's taxonomy but nothing is currently
     # configured to publish them (quantum-engine, 2026-09-27) — no handler
@@ -673,6 +773,7 @@ async def run_forever() -> None:
     start/stop this every time a client connects/disconnects, which is not
     what a fleet-shared feed needs)."""
     _load_alerts_into_index()
+    _load_references_into_index()
     asyncio.create_task(_engine_health_ticker())
     while True:
         try:

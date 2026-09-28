@@ -47,6 +47,48 @@ yourself. `register_live_alert`'s response includes `upserted_previous_alert_id`
 just replaced, or `null` on the first registration under that label). Omit `label` for the
 original always-insert behavior — nothing changes for existing callers.
 
+## Reference values `expr` can read back — `set_trigger_references`
+
+Added 2026-09-28, Ben's directive (#tradedesk-fundamentals): *"if you need a prior close
+reference you can set up code to store that for yourself and then get it — it's a good example
+of something I would want them to build."* General-purpose, not prior-close-specific — any owner
+can store an arbitrary named per-ticker value and have every one of their triggers see it as a
+plain field.
+
+```python
+set_trigger_references(owner="me", ref_key="prior_close", values={"AAPL": 227.55, "MSFT": 510.2})
+
+register_live_alert(condition={
+    "kind": "trigger", "source": "quantum_bar", "spec_id": "time_1m", "tickers": ["AAPL"],
+    "expr": "prior_close is not None and abs(close/prior_close - 1) >= 0.20"},
+  notify_to="me")
+```
+
+`prior_close` (the `ref_key` you chose) appears directly in `expr`'s scope for that ticker, no
+lookup syntax — same field-injection pattern as everything else in this skill. A companion
+`{ref_key}_updated_unix_ns` is injected alongside it for staleness checks you write yourself (no
+built-in max-age policy — this system doesn't decide what's stale, you do).
+
+⛔ **Referencing a `ref_key` you never set for that ticker raises `NameNotDefined`, same as any
+typo'd field name** — this is a normal per-event failure (see auto-disable above), not special
+behavior. Always guard: `prior_close is not None and ...`, never assume every ticker has a value.
+
+⛔⛔ **Isolation is per OWNER, not global — verified 2026-09-28.** Two different owners' triggers
+on the same (source, ticker) never share reference values, even though they're evaluated from the
+same underlying event in the same loop iteration internally. You only ever see your own
+`set_trigger_references` writes.
+
+`list_trigger_references(owner, ref_key=None)` reads back what's stored. Capped at
+`MASSIVE_LIVE_MAX_REFERENCES_PER_OWNER` (default 20000) distinct `(ref_key, ticker)` pairs per
+owner — `set_trigger_references` raises rather than silently dropping past the cap. No history:
+re-calling with the same `(owner, ref_key, ticker)` overwrites, it does not append.
+
+**This is NOT built for you** — nobody populates `prior_close` or any other ref_key
+automatically. You compute the value (e.g. via `get_previous_close_agg`/`get_aggs`) and write it
+yourself, on whatever schedule your use case needs (tradedesk.fundamentals' price-shock case:
+daily, before market open, via the same `set_trigger_references` call, since prior close changes
+every session).
+
 ## ⛔⛔ `expr` is NOT Python `eval()` — it's a restricted grammar, and one specific thing is easy to get wrong
 
 Evaluated via `simpleeval`'s `EvalWithCompoundTypes` — comparisons (`>`,`<`,`==`,`in`, ...),
