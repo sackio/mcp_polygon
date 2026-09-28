@@ -32,7 +32,7 @@ import os
 import sqlite3
 import time
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
@@ -60,6 +60,18 @@ ALERTS_DB_PATH = os.environ.get("MASSIVE_LIVE_ALERTS_DB", "/app/.cache/live_aler
 
 HISTORY_LIMIT = 500
 ENGINE_HEALTH_TICK_SECONDS = 5
+
+# ⛔ ROOT CAUSE of the 2026-09-28 OOM (mcp_polygon_server hit 59.9GB, killed by
+# `system`): HISTORY_LIMIT bounds each (spec_id, ticker) key's deque, but
+# nothing previously bounded the NUMBER OF KEYS — quantum-engine discovers
+# tickers on first print and evicts nothing (massive-live skill), so
+# _state.bars/_state.history grew one entry per distinct (spec_id, ticker)
+# ever seen, forever, for the life of the process. This caps total tracked
+# keys with LRU eviction (oldest-updated key dropped first) instead. Sizing:
+# HISTORY_LIMIT(500) * MAX_TRACKED_KEYS entries, each entry roughly ~1KB
+# (payload fields duplicated once into `raw`) -> ~500KB/key -> ~2GB at the
+# default below. This is an ESTIMATE, not a measured entry size.
+MAX_TRACKED_KEYS = int(os.environ.get("MASSIVE_LIVE_MAX_TRACKED_KEYS", "4000"))
 
 # Confirmed independently outside these 23, dup ratio is exactly 1.0000 over
 # 853k rows (massive-live skill, 2026-09-22). Do not add to or infer this set
@@ -102,8 +114,11 @@ def _sanitize_ticker(ticker: str) -> str:
 
 class _LiveState:
     def __init__(self) -> None:
-        self.bars: Dict[Tuple[str, str], dict] = {}
-        self.history: Dict[Tuple[str, str], Deque[dict]] = {}
+        # OrderedDict, not dict: _on_bar uses move_to_end()+popitem(last=False)
+        # for LRU eviction across both, keyed identically since they're always
+        # written together (see MAX_TRACKED_KEYS above).
+        self.bars: "OrderedDict[Tuple[str, str], dict]" = OrderedDict()
+        self.history: "OrderedDict[Tuple[str, str], Deque[dict]]" = OrderedDict()
         self.engine_instances: Dict[str, dict] = {}
         self.cross_asset_spec_ids: set = set()
         self.event_count = 0
@@ -483,11 +498,16 @@ async def _on_bar(msg) -> None:
     entry = _entry_from_bar_payload(market, spec_id, ticker, payload, now_ns)
     key = (spec_id, ticker)
     _state.bars[key] = entry
+    _state.bars.move_to_end(key)
     hist = _state.history.get(key)
     if hist is None:
         hist = deque(maxlen=HISTORY_LIMIT)
         _state.history[key] = hist
+    _state.history.move_to_end(key)
     hist.append(entry)
+    while len(_state.bars) > MAX_TRACKED_KEYS:
+        evicted_key, _ = _state.bars.popitem(last=False)
+        _state.history.pop(evicted_key, None)
     await _evaluate_threshold_alerts(key, entry)
     await _evaluate_trigger_alerts("quantum_bar", ticker, None, entry)
 

@@ -8,14 +8,27 @@ services:
       # builder (qfdata.paths) so mcp_massive/corpus.py imports the real thing
       # instead of re-implementing the path shape. Same absolute path in and out
       # of the container so paths returned to callers are directly usable.
+      # NOTE: quantum-feed moved this package from tools/data (a symlink, since
+      # removed, commit df534f762) to crates/qf-data/pipeline (commit 425f9fa65)
+      # on Ben's order — the old path is now an empty directory, not an error,
+      # which is why this broke silently. Mount the new location.
       - /mnt/nas/data/quantum:/mnt/nas/data/quantum:ro
-      - /mnt/nas/data/code/quantum-feed/tools/data:/mnt/nas/data/code/quantum-feed/tools/data:ro
+      - /mnt/nas/data/code/quantum-feed/crates/qf-data/pipeline:/mnt/nas/data/code/quantum-feed/crates/qf-data/pipeline:ro
       # Read-only: the RAW corpus (vendor bytes). Lives on server5's local ZFS,
       # NFS-mounted on server4 (this container's host) at this path — server4-
       # specific, not the same path another host would use for the same export.
       - /mnt/server5/zpolygon:/mnt/server5/zpolygon:ro
     container_name: mcp_polygon_server
     network_mode: host
+    # 2026-09-28: mcp_polygon_server leaked to 59.9GB and took server4 down
+    # (system, incident report). `system` capped it live via `docker update
+    # --memory 16g --memory-swap 16g`, which is lost on the next `docker
+    # compose up` — this makes the cap durable. Root cause (unbounded
+    # (spec_id,ticker) key growth in live_ingest.py's bar cache) is fixed
+    # separately; this is the backstop so any future leak kills only this
+    # container, not the host.
+    mem_limit: 16g
+    memswap_limit: 16g
     environment:
       # MASSIVE_API_KEY is the current name; falls back to POLYGON_API_KEY in
       # code if unset, so this repo's .env doesn't need to change today.
