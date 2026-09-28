@@ -49,6 +49,17 @@ don't read those two as current.
 - `size` is a `double` (fractional shares are real). `us_stocks_sip/quotes_v1` has real rows
   with `bid_price=ask_price=0, bid_size=ask_size=0` — pre-market placeholder quotes, not a
   decoding bug. Filter before computing spread (see `massive-microstructure`).
+- ⛔⛔ **`quotes_v1`'s `bid_size`/`ask_size` change UNIT CONVENTION at a hard date boundary —
+  2011-12-30 is the last day of RAW ROUND LOTS (`5` means 500 shares), 2012-01-03 is the first
+  day of already-SHARE-equivalent values (always a clean multiple of 100).** Measured 2026-09-27
+  directly against the parquet files on four independent liquid tickers (AAPL, MSFT, SPY, JPM —
+  ruling out a single-ticker artifact): pre-boundary `ask_size` is tiny (median 2-13, max
+  12-230, essentially never `% 100 == 0`); post-boundary it jumps by ~100x and is always a
+  multiple of 100 (median 200-6000). Massive's own current docs (`flat-files/stocks/quotes.md`,
+  `rest/stocks/trades-quotes/quotes.md`) say "shares" — **true only from 2012-01-03 on.** For any
+  date before that, multiply `ask_size`/`bid_size` by 100 to get real shares, or displayed NBBO
+  depth reads 100x too thin. Not yet checked whether PIVOT's copy of `quotes_v1`, or any other
+  lane's size field, has an analogous break at the same or a different date.
 - Corpus data is **raw, unadjusted** for splits/dividends. See `massive-adjustments`.
 - PIVOT's canonical path builder (`qfdata.paths.zticker_partition`) only covers
   `us_stocks_sip`, and `resolve_pivot_path` takes no `cluster` argument at all — it's
