@@ -141,28 +141,47 @@ async def _handle_announcement_line(line: str) -> None:
 
 
 async def _jsonl_tail_forever() -> None:
+    # 2026-09-28: found live (tradedesk-12) — server4's /mnt/nas is mounted
+    # NFSv4 with acregmin=acregmax=600, a hard 600s file-ATTRIBUTE cache. A
+    # bare stat() on a path NFS has already cached (what the old version of
+    # this function did every poll) can return a size up to 600s stale, which
+    # measured as a ~485s median delivery lag despite polling every 2s and
+    # despite the file itself being written within ~5s of the real event.
+    # NFSv4 close-to-open consistency revalidates on OPEN, not on a bare
+    # stat() of an already-resolved path — tradedesk-12 measured cross-host
+    # append visibility at 1.0s for a reader that re-opens every cycle.
+    # Fix: open() fresh every poll and get size from the freshly-opened
+    # handle (f.seek(0,2)/f.tell()) instead of a separate Path.stat() call.
     path = Path(ANNOUNCEMENTS_JSONL_PATH)
     # Start at the CURRENT end of file — this is a live-events feed, not a
     # backfill tool. Rows already in the file were ingested before this
     # consumer existed and are readable directly from the file by anyone who
     # wants the history.
-    last_size = path.stat().st_size if path.exists() else 0
+    last_size = 0
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            last_size = f.tell()
+    except FileNotFoundError:
+        last_size = 0
     while True:
         try:
-            if path.exists():
-                size = path.stat().st_size
+            with path.open("r") as f:
+                f.seek(0, 2)
+                size = f.tell()
                 if size < last_size:
                     logger.warning("mind_ingest: %s shrank (rotated/truncated) — restarting from the top", path)
                     last_size = 0
                 if size > last_size:
-                    with path.open("r") as f:
-                        f.seek(last_size)
-                        new_data = f.read()
+                    f.seek(last_size)
+                    new_data = f.read()
                     last_size = size
                     for line in new_data.splitlines():
                         line = line.strip()
                         if line:
                             await _handle_announcement_line(line)
+        except FileNotFoundError:
+            pass
         except Exception:
             logger.exception("mind_ingest: jsonl tail failed on %s", path)
         await asyncio.sleep(JSONL_POLL_SECONDS)
