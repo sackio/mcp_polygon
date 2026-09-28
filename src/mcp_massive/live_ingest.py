@@ -450,12 +450,17 @@ def list_alerts(owner: str) -> List[Dict[str, Any]]:
             "fire_count": r[5],
         }
         if condition.get("kind") == "trigger":
-            # Per-(alert, ticker) state, not the alert-level flag below (see
-            # _trigger_ticker_state) — this is the field that's actually
-            # meaningful for a multi-ticker trigger.
-            entry["satisfied_tickers"] = sorted(
-                t for t in condition.get("tickers", []) if _trigger_ticker_state.get((alert_id, t))
-            )
+            if condition.get("repeat"):
+                # repeat mode fires on every match with no edge-state tracked
+                # at all — satisfied_tickers has no meaning here.
+                entry["repeat"] = True
+            else:
+                # Per-(alert, ticker) state, not the alert-level flag below
+                # (see _trigger_ticker_state) — this is the field that's
+                # actually meaningful for a multi-ticker trigger.
+                entry["satisfied_tickers"] = sorted(
+                    t for t in condition.get("tickers", []) if _trigger_ticker_state.get((alert_id, t))
+                )
         else:
             entry["currently_satisfied"] = bool(r[6])
         out.append(entry)
@@ -602,14 +607,26 @@ async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optiona
             )
             continue
         satisfied = bool(result)
+        fire_payload = {"source": source, "ticker": ticker, "event_type": event_type, "fields": eval_fields,
+                         "fired_unix_ns": time.time_ns()}
+        fire_detail = f"{source}/{ticker} matched `{condition['expr']}` — fields={eval_fields}"
+        if condition.get("repeat"):
+            # 2026-09-28: fires on EVERY matching event, no edge-detection, no
+            # _trigger_ticker_state tracking at all — added because edge-
+            # triggering cannot express a COUNTING rule ("arm on the 4th
+            # same-side tape firing"), which is a semantics gap no delivery
+            # mechanism can paper over (see massive-triggers skill). Opt-in
+            # only; every existing caller is unaffected since "repeat" absent
+            # keeps the original edge-triggered behavior below. Caller's own
+            # responsibility to scope `expr`/`tickers` sanely on a
+            # high-frequency source (quantum_trade/quantum_quote) — this can
+            # fire once per event with no throttling.
+            if satisfied:
+                await _fire_alert(rec, fire_detail, payload=fire_payload)
+            continue
         was_satisfied = _trigger_ticker_state.get((rec["id"], ticker), False)
         if satisfied and not was_satisfied:
-            await _fire_alert(
-                rec,
-                f"{source}/{ticker} matched `{condition['expr']}` — fields={eval_fields}",
-                payload={"source": source, "ticker": ticker, "event_type": event_type, "fields": eval_fields,
-                         "fired_unix_ns": time.time_ns()},
-            )
+            await _fire_alert(rec, fire_detail, payload=fire_payload)
             _set_trigger_ticker_satisfied(rec, ticker, True)
         elif not satisfied and was_satisfied:
             _set_trigger_ticker_satisfied(rec, ticker, False)

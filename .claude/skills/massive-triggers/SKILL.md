@@ -51,14 +51,14 @@ but the alert is already `was_satisfied=True` from the first, so nothing re-noti
 only once a DIFFERENT-kind event (or a quiet period, if `expr` can express one) makes it false
 in between. A book counting occurrences would arm once and never see the count increment — it
 would look healthy (one real notification) while silently starving on every repeat, a MISS with
-no visible symptom, not a crash. ⇒ **If your rule counts events, or needs every single qualifying
-occurrence rather than "this started being true," `register_live_alert` is the wrong tool.**
-There is currently no raw, ungated event stream through this MCP — consume
-`market.<mkt>.event.<class>.<ticker>` on the engine's NATS bus directly instead (see
-`massive-live`), applying this skill's field-resolution rules (tape price-by-kind, `direction`
-presence-by-kind, ticker sanitization) in your own decoder. This is not a transport limitation
-(no webhook/callback delivery existed as of 2026-09-28 either, a separate real gap for headless
-consumers) — it is a semantics limitation that a delivery-mechanism fix would not have solved.
+no visible symptom, not a crash. ⇒ **Fixed same day: `condition["repeat"]: true`** fires on EVERY
+matching event, no edge-detection, no dedup — the counting case above becomes
+`expr="kind == 'sweep'"` with `"repeat": true` and you get one notification per sweep, full stop.
+Default (no `"repeat"`) is unchanged, still edge-triggered, every existing caller unaffected. No
+throttling in repeat mode — on a high-frequency source (`quantum_trade`/`quantum_quote`) this can
+fire once per event; scope `expr`/`tickers` accordingly, and prefer a naturally rarer source
+(`quantum_tape`, `mind_sse`) when you can. Combine with the `"http://"`/`"https://"` `notify_to`
+form (below) for a headless consumer that can't receive an ATC DM at all.
 
 ## Updating a trigger without hand-tracking its `alert_id` — the `label` field
 

@@ -2684,6 +2684,15 @@ async def register_live_alert(
       auto-disables itself with a one-time notification rather than
       silently degrading every other registered trigger.
 
+    A "trigger" condition may also carry "repeat": true — fires on EVERY
+    matching event instead of only on the "became true" transition (the
+    default). Use this for a COUNTING rule (e.g. "notify me on every sweep,
+    I'll count them myself") that plain edge-triggering cannot express: with
+    the default (no "repeat"), two consecutive matching events with nothing
+    non-matching between them only fire once. No throttling in repeat mode —
+    on a high-frequency source (quantum_trade/quantum_quote) this can fire
+    once per event; scope `expr`/`tickers` accordingly.
+
     Any condition dict may also carry an optional "label" (a string you
     choose, stable across re-registrations) — when present, registering
     again with the same (owner, label) cancels the previous alert under
