@@ -256,17 +256,39 @@ def _load_alerts_into_index() -> None:
 
 
 def register_alert(condition: Dict[str, Any], notify_to: str, owner: Optional[str] = None) -> Dict[str, Any]:
+    """`condition["label"]` (optional) is an UPSERT key, not a validated
+    field — _validate_condition doesn't know about it, it's read here only.
+    When present, any existing non-cancelled alert for this OWNER with the
+    same label is cancelled before the new one is inserted, so a rebalance
+    (new thresholds, same conceptual alert) updates in place under a stable
+    name instead of accumulating a fresh alert_id every time. No label means
+    the old always-insert behavior, unchanged — this is additive, not a
+    schema migration (label lives inside condition_json like everything
+    else, no new column)."""
     _validate_condition(condition)
-    alert_id = str(uuid.uuid4())
+    label = condition.get("label")
     owner = owner or notify_to
     conn = _db()
+    upserted_id = None
+    if label:
+        rows = conn.execute(
+            "SELECT id, condition_json FROM live_alerts WHERE owner = ? AND cancelled = 0", (owner,)
+        ).fetchall()
+        for row_id, condition_json in rows:
+            if json.loads(condition_json).get("label") == label:
+                conn.execute("UPDATE live_alerts SET cancelled = 1 WHERE id = ?", (row_id,))
+                upserted_id = row_id
+    alert_id = str(uuid.uuid4())
     conn.execute(
         "INSERT INTO live_alerts (id, owner, notify_to, condition_json, created_unix_ns) VALUES (?, ?, ?, ?, ?)",
         (alert_id, owner, notify_to, json.dumps(condition), time.time_ns()),
     )
     conn.commit()
     _load_alerts_into_index()
-    return {"alert_id": alert_id, "owner": owner, "notify_to": notify_to, "condition": condition}
+    result = {"alert_id": alert_id, "owner": owner, "notify_to": notify_to, "condition": condition}
+    if label:
+        result["upserted_previous_alert_id"] = upserted_id
+    return result
 
 
 def list_alerts(owner: str) -> List[Dict[str, Any]]:

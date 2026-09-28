@@ -2677,6 +2677,16 @@ async def register_live_alert(
       auto-disables itself with a one-time notification rather than
       silently degrading every other registered trigger.
 
+    Any condition dict may also carry an optional "label" (a string you
+    choose, stable across re-registrations) — when present, registering
+    again with the same (owner, label) cancels the previous alert under
+    that label and inserts the new one, so a periodic threshold refresh
+    (e.g. a daily reference-price update) updates in place under a name
+    you control instead of accumulating a fresh alert_id you'd otherwise
+    have to track and cancel yourself. The response's
+    "upserted_previous_alert_id" says what (if anything) was replaced.
+    Omit "label" for the old always-insert behavior.
+
     Edge-triggered: fires once when the condition first becomes true, not
     again on every subsequent event — it re-arms only after the condition
     goes false again. `owner` defaults to `notify_to`; pass it separately if

@@ -36,6 +36,17 @@ semantics as the existing `threshold` kind), re-arming only after it goes false 
 `list_my_live_alerts(owner)` / `cancel_live_alert(alert_id)` manage what you've registered.
 `owner` defaults to `notify_to`.
 
+## Updating a trigger without hand-tracking its `alert_id` — the `label` field
+
+Added 2026-09-28 for tradedesk.fundamentals' rebalance-driven books (per-ticker thresholds that
+need a fresh value on a schedule, same conceptual alert). Any `condition` dict may carry an
+optional `"label"` — a string you choose, stable across re-registrations. Registering again with
+the same `(owner, label)` cancels the previous alert under that label first, so you get one
+logical alert per label instead of an ever-growing pile of alert_ids you have to track and cancel
+yourself. `register_live_alert`'s response includes `upserted_previous_alert_id` (the id that was
+just replaced, or `null` on the first registration under that label). Omit `label` for the
+original always-insert behavior — nothing changes for existing callers.
+
 ## ⛔⛔ `expr` is NOT Python `eval()` — it's a restricted grammar, and one specific thing is easy to get wrong
 
 Evaluated via `simpleeval`'s `EvalWithCompoundTypes` — comparisons (`>`,`<`,`==`,`in`, ...),
