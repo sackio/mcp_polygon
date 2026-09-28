@@ -152,6 +152,19 @@ _trigger_error_counts: Dict[str, int] = {}
 _reference_index: Dict[Tuple[str, str], Dict[str, Any]] = {}
 MAX_REFERENCES_PER_OWNER = int(os.environ.get("MASSIVE_LIVE_MAX_REFERENCES_PER_OWNER", "20000"))
 
+# ⛔ (alert_id, ticker) -> satisfied — 2026-09-28 correctness fix. The "trigger"
+# kind's edge-trigger state used to live on the shared alert `rec` dict's
+# "currently_satisfied" key, which is correct for `threshold` (inherently
+# single-ticker) and `engine_health` (inherently alert-global) but WRONG for
+# `trigger`: one alert can be scoped to hundreds of tickers, and every ticker
+# shared that ONE flag. Found live in production (KOD +158%, tradedesk.
+# fundamentals, alert 3d065eb6): any OTHER ticker's non-match reset the shared
+# flag, so KOD's alert both re-fired every minute it stayed satisfied AND
+# could have silently swallowed a genuine fire for a different ticker that
+# happened to evaluate while the flag was already True from KOD. Per-ticker
+# state fixes both directions at once.
+_trigger_ticker_state: Dict[Tuple[str, str], bool] = {}
+
 _db_conn: Optional[sqlite3.Connection] = None
 
 
@@ -174,6 +187,16 @@ def _db() -> sqlite3.Connection:
                 fire_count INTEGER NOT NULL DEFAULT 0,
                 currently_satisfied INTEGER NOT NULL DEFAULT 0,
                 cancelled INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        _db_conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trigger_ticker_state (
+                alert_id TEXT NOT NULL,
+                ticker TEXT NOT NULL,
+                satisfied INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (alert_id, ticker)
             )
             """
         )
@@ -345,6 +368,34 @@ def list_references(owner: str, ref_key: Optional[str] = None) -> Dict[str, Any]
     }
 
 
+def _load_trigger_ticker_state() -> None:
+    global _trigger_ticker_state
+    rows = _db().execute("SELECT alert_id, ticker, satisfied FROM trigger_ticker_state").fetchall()
+    _trigger_ticker_state = {(alert_id, ticker): bool(satisfied) for alert_id, ticker, satisfied in rows}
+
+
+def _set_trigger_ticker_satisfied(rec: dict, ticker: str, satisfied: bool) -> None:
+    """Per-(alert_id, ticker) edge-trigger state for the 'trigger' kind —
+    see _trigger_ticker_state's module-level comment for why this can't share
+    `threshold`/`engine_health`'s alert-level `currently_satisfied`. Also
+    bumps the alert-level fire_count/last_fired_unix_ns on `live_alerts` when
+    satisfied — those remain reasonable AGGREGATE stats across every ticker
+    this alert covers, unlike the per-ticker boolean itself."""
+    _trigger_ticker_state[(rec["id"], ticker)] = satisfied
+    conn = _db()
+    conn.execute(
+        "INSERT INTO trigger_ticker_state (alert_id, ticker, satisfied) VALUES (?, ?, ?) "
+        "ON CONFLICT(alert_id, ticker) DO UPDATE SET satisfied = excluded.satisfied",
+        (rec["id"], ticker, int(satisfied)),
+    )
+    if satisfied:
+        conn.execute(
+            "UPDATE live_alerts SET last_fired_unix_ns = ?, fire_count = fire_count + 1 WHERE id = ?",
+            (time.time_ns(), rec["id"]),
+        )
+    conn.commit()
+
+
 def register_alert(condition: Dict[str, Any], notify_to: str, owner: Optional[str] = None) -> Dict[str, Any]:
     """`condition["label"]` (optional) is an UPSERT key, not a validated
     field — _validate_condition doesn't know about it, it's read here only.
@@ -387,18 +438,28 @@ def list_alerts(owner: str) -> List[Dict[str, Any]]:
         "currently_satisfied FROM live_alerts WHERE owner = ? AND cancelled = 0",
         (owner,),
     ).fetchall()
-    return [
-        {
-            "alert_id": r[0],
+    out = []
+    for r in rows:
+        alert_id, condition = r[0], json.loads(r[2])
+        entry = {
+            "alert_id": alert_id,
             "notify_to": r[1],
-            "condition": json.loads(r[2]),
+            "condition": condition,
             "created_unix_ns": r[3],
             "last_fired_unix_ns": r[4],
             "fire_count": r[5],
-            "currently_satisfied": bool(r[6]),
         }
-        for r in rows
-    ]
+        if condition.get("kind") == "trigger":
+            # Per-(alert, ticker) state, not the alert-level flag below (see
+            # _trigger_ticker_state) — this is the field that's actually
+            # meaningful for a multi-ticker trigger.
+            entry["satisfied_tickers"] = sorted(
+                t for t in condition.get("tickers", []) if _trigger_ticker_state.get((alert_id, t))
+            )
+        else:
+            entry["currently_satisfied"] = bool(r[6])
+        out.append(entry)
+    return out
 
 
 def cancel_alert(alert_id: str) -> Dict[str, Any]:
@@ -528,11 +589,12 @@ async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optiona
             )
             continue
         satisfied = bool(result)
-        if satisfied and not rec["currently_satisfied"]:
+        was_satisfied = _trigger_ticker_state.get((rec["id"], ticker), False)
+        if satisfied and not was_satisfied:
             await _fire_alert(rec, f"{source}/{ticker} matched `{condition['expr']}` — fields={eval_fields}")
-            _set_satisfied(rec, True)
-        elif not satisfied and rec["currently_satisfied"]:
-            _set_satisfied(rec, False)
+            _set_trigger_ticker_satisfied(rec, ticker, True)
+        elif not satisfied and was_satisfied:
+            _set_trigger_ticker_satisfied(rec, ticker, False)
 
 
 async def _evaluate_engine_health_alerts() -> None:
@@ -774,6 +836,7 @@ async def run_forever() -> None:
     what a fleet-shared feed needs)."""
     _load_alerts_into_index()
     _load_references_into_index()
+    _load_trigger_ticker_state()
     asyncio.create_task(_engine_health_ticker())
     while True:
         try:
