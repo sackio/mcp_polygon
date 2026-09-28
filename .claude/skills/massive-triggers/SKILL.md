@@ -147,6 +147,18 @@ not as a broken trigger — see auto-disable below for where the line actually i
 | `mind_sse` | whatever mind's event JSON carries for that `event_type` (varies by taxonomy type — `ticker`/`subject`, plus type-specific fields) + `received_unix_ns` |
 | `mind_earnings_push` | `ticker, announced_at, ingested_at`, occasionally `period`/`matched` + `received_unix_ns` |
 
+⛔⛔ **`mind_sse` is NOT limited to the 6 types named above — this consumer connects to
+`/api/events/sse` with NO type filter, so ALL 57 of mind's taxonomy types flow through
+unfiltered** (confirmed 2026-09-28 by reading `mind_ingest.py` directly: no `?event_type=` param
+on the connection). The 6 named in the worked examples below were just the ones documented here
+first — they are not a filter, and `event_type` in your `condition` picks whichever one you
+want. Per mind directly (2026-09-28): the full taxonomy includes `clinical_trial_result`,
+`scheduled_catalyst`, `equity_offering_or_issuance`, `insider_transaction`,
+`bankruptcy_or_receivership`, `share_structure_action`, and 45 more — see mind's own
+`mind-events` skill for the complete list, not this one. mind also emits non-taxonomy frames on
+the same stream (`article`, `signal`, `freshness`, `unverifiable`, `malformed`) which pass
+through the same way if they parse as JSON.
+
 ## ⛔⛔ `quantum_tape`'s four payload traps — resolved into the fields above, but know why
 
 quantum-engine's wire audit (2026-09-27): one NATS subject
