@@ -18,16 +18,6 @@ services:
       # NFS-mounted on server4 (this container's host) at this path — server4-
       # specific, not the same path another host would use for the same export.
       - /mnt/server5/zpolygon:/mnt/server5/zpolygon:ro
-      # Read-only: mind's earnings-announce-push sink, tailed by mind_ingest.py
-      # for the mind_earnings_push trigger source. MISSING since that source
-      # was built (2026-09-28) — never mounted, so ANNOUNCEMENTS_JSONL_PATH's
-      # default always resolved to a nonexistent path inside the container,
-      # which is not an exception (Path.exists() just returns False), so
-      # _jsonl_tail_forever() silently no-op'd forever with zero log output.
-      # Found live: tradedesk-12's mind_earnings_push trigger did not fire on
-      # a real MTN earnings print (announced 20:06:47Z) despite the file
-      # itself updating correctly on the shared NAS.
-      - /mnt/nas/data/code/tradedesk/projects/earnings/data:/mnt/nas/data/code/tradedesk/projects/earnings/data:ro
     container_name: mcp_polygon_server
     network_mode: host
     # 2026-09-28: mcp_polygon_server leaked to 59.9GB and took server4 down

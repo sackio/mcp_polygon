@@ -93,7 +93,7 @@ _OPS = {
 # https://atc.sack.io/f/up-1ccffa2f7cf6b7a981c9f7ab13debc53) — a third condition
 # kind alongside threshold/engine_health, evaluating an arbitrary restricted
 # expression against a normalized event envelope from any of five sources.
-_TRIGGER_SOURCES = {"quantum_bar", "quantum_trade", "quantum_quote", "quantum_tape", "mind_sse", "mind_earnings_push"}
+_TRIGGER_SOURCES = {"quantum_bar", "quantum_trade", "quantum_quote", "quantum_tape", "mind_sse"}
 _TRIGGER_EVAL_MAX_SECONDS = float(os.environ.get("MASSIVE_LIVE_TRIGGER_EVAL_MAX_SECONDS", "0.05"))
 # A single raise is usually normal (e.g. `strength > 0.5` on a tape kind that
 # doesn't grade — see the tape section below), not evidence the expr is
@@ -954,10 +954,9 @@ async def run_forever() -> None:
 async def evaluate_trigger(source: str, ticker: str, event_type: Optional[str], fields: Dict[str, Any]) -> None:
     """Public entry point for another ingestion module (mind_ingest.py) to run
     its own normalized events through this same trigger-evaluation/alert-
-    registry machinery, without duplicating it. `source` should be one of
-    "mind_sse"/"mind_earnings_push" — anything registered against a
-    quantum_* source will simply never match mind-sourced events, since the
-    index key is (source, ticker)."""
+    registry machinery, without duplicating it. `source` should be "mind_sse"
+    — anything registered against a quantum_* source will simply never match
+    mind-sourced events, since the index key is (source, ticker)."""
     await _evaluate_trigger_alerts(source, ticker, event_type, fields)
 
 

@@ -21,7 +21,7 @@ sources:
 register_live_alert(
   condition={
     "kind": "trigger",
-    "source": "quantum_bar" | "quantum_trade" | "quantum_quote" | "quantum_tape" | "mind_sse" | "mind_earnings_push",
+    "source": "quantum_bar" | "quantum_trade" | "quantum_quote" | "quantum_tape" | "mind_sse",
     "spec_id": "time_1m",        # REQUIRED for quantum_bar, omit otherwise
     "event_type": "sweep",       # optional, quantum_tape only — filters the `kind` field client-side
     "tickers": ["AAPL", "MSFT"], # REQUIRED, non-empty — every trigger is scoped, never "anything"
@@ -145,7 +145,6 @@ not as a broken trigger — see auto-disable below for where the line actually i
 | `quantum_quote` | `bid_price, ask_price, bid_size, ask_size, mid_price` (computed), `timestamp_ns` |
 | `quantum_tape` | `kind, trade_price, quote_midpoint, quote_level, size, strength, direction, timestamp_ns` — see the four traps below |
 | `mind_sse` | whatever mind's event JSON carries for that `event_type` (varies by taxonomy type — `ticker`/`subject`, plus type-specific fields) + `received_unix_ns` |
-| `mind_earnings_push` | `ticker, announced_at, ingested_at`, occasionally `period`/`matched` + `received_unix_ns` |
 
 ⛔⛔ **`mind_sse` is NOT limited to the 6 types named above — this consumer connects to
 `/api/events/sse` with NO type filter, so ALL 57 of mind's taxonomy types flow through
@@ -154,10 +153,12 @@ on the connection). The 6 named in the worked examples below were just the ones 
 first — they are not a filter, and `event_type` in your `condition` picks whichever one you
 want. Per mind directly (2026-09-28): the full taxonomy includes `clinical_trial_result`,
 `scheduled_catalyst`, `equity_offering_or_issuance`, `insider_transaction`,
-`bankruptcy_or_receivership`, `share_structure_action`, and 45 more — see mind's own
-`mind-events` skill for the complete list, not this one. mind also emits non-taxonomy frames on
-the same stream (`article`, `signal`, `freshness`, `unverifiable`, `malformed`) which pass
-through the same way if they parse as JSON.
+`bankruptcy_or_receivership`, `share_structure_action`, `filing_notice` (raw EDGAR detection,
+before any parse — fields nested under `fields`: `form_type`, `cik`, `items`, `url`),
+`earnings_announcement` (the real earnings-drop event, added 2026-09-28 — see the worked
+example below), and more — see mind's own `mind-events` skill for the complete list, not this
+one. mind also emits non-taxonomy frames on the same stream (`article`, `signal`, `freshness`,
+`unverifiable`, `malformed`) which pass through the same way if they parse as JSON.
 
 ## ⛔⛔ `quantum_tape`'s four payload traps — resolved into the fields above, but know why
 
@@ -194,39 +195,50 @@ something this system resolves.
 ## Auto-disable — when a trigger stops firing on its own
 
 A trigger disables itself and sends ONE notification to its owner (not silent, not repeated) in
-two cases: (1) a single evaluation takes over ~50ms (`MASSIVE_LIVE_TRIGGER_EVAL_MAX_SECONDS`) —
-a real resource-pathology signal; (2) **20 consecutive raised exceptions with zero successful
-evaluations in between** — every event this trigger has ever seen failed the same way, almost
-always a typo'd field name for that source. A single occasional raise (e.g. `strength` being
-`None` on an ungraded tape kind, if your `expr` didn't guard for it) does NOT count toward this
-— only a trigger that has NEVER once evaluated successfully gets disabled.
+two cases: (1) **5 consecutive evaluations over ~50ms** (`MASSIVE_LIVE_TRIGGER_EVAL_MAX_SECONDS`,
+count via `MASSIVE_LIVE_TRIGGER_MAX_CONSECUTIVE_SLOW`) — 2026-09-28: this used to disable on a
+SINGLE slow eval, which killed a real production trigger twice off ordinary shared-process
+contention (a plain 6-comparison boolean, nothing pathological — memo `6c76b91e`); now requires
+5 in a row, same doctrine as (2) below; (2) **20 consecutive raised exceptions with zero
+successful evaluations in between** — every event this trigger has ever seen failed the same
+way, almost always a typo'd field name for that source. A single occasional raise (e.g.
+`strength` being `None` on an ungraded tape kind, if your `expr` didn't guard for it) does NOT
+count toward either — only a trigger that has never once evaluated successfully, or that is
+slow on every recent attempt, gets disabled. A disabled alert stays visible in
+`list_my_live_alerts` as `state="disabled"` with `disabled_reason` set, so you can read its
+condition back and re-register it — it does not just vanish.
 
-## Worked example: watch for earnings on your own list, without mind's bespoke pipeline
+## Worked example: watch for real earnings drops
 
-⛔⛔ **`tradedesk-earnings` already has its own working, low-latency (p50 1.98s) earnings-drop
-pipeline** (mind's `earnings-announce-push.sh` → ATC DM + `announcements.jsonl` →
-`thread-tradedesk-12` trading directly off it). **Do not register a trigger here for that same
-purpose — it would be a second, competing path into the same downstream consumer.** This
-system's earnings value is for OTHER agents who don't already have that bespoke integration:
+⛔⛔ **2026-09-28: the old `mind_earnings_push` source (a plain-file tail of mind's
+`announcements.jsonl`) is REMOVED.** It had two real bugs in a row (a bind mount that was never
+added, then an NFS attribute-cache floor on server4's `/mnt/nas` adding up to 10 minutes of
+delivery lag — memo `144b71ed`) and Ben ordered it gone once mind shipped a proper live event.
+**Use `mind_sse` with `event_type: "earnings_announcement"` instead** — same trigger machinery,
+no file, no NFS, no separate code path:
 
 ```python
 register_live_alert(
   condition={
     "kind": "trigger",
-    "source": "mind_earnings_push",
+    "source": "mind_sse",
+    "event_type": "earnings_announcement",
     "tickers": ["NVDA", "AMD", "SMCI"],
-    "expr": "ticker in ['NVDA','AMD','SMCI']",
+    "expr": "True",
   },
   notify_to="your-agent-name",
 )
 ```
 
-This reads the SAME sink mind already produces (`announcements.jsonl`, tailed as a plain file —
-not a reimplementation of mind's extraction) and inherits its per-ticker-per-day dedupe. Payload
-you receive is exactly `ticker` + `announced_at` — no beat/miss, that's stripped at the source on
-purpose. Real traps in this specific feed (from mind directly): it's a headline regex with an
-unmeasured miss rate (a floor, not a census), and items landing around 03:00 ET arrive ~1,293s
-behind on average — a real, structural delay for that slice, not a bug.
+Payload's nested `fields` carries `ticker`, `announced_at`, `period`, `matched` — no title, no
+beat/miss, stripped at the source on purpose. ⚠️ These are nested one level: in `expr`, reference
+`fields['announced_at']`, not a bare `announced_at` — the top-level keys on a `mind_sse` payload
+are `id`/`source`/`ref_id`/`event_type`/`subject`/`ticker`/`observed_at`, with the announcement's
+own four keys living inside the `fields` value.
+
+⛔⛔ **`tradedesk-earnings` already has its own bespoke pipeline reading mind's ATC DM directly —
+do not register a competing trigger here for the same downstream consumer.** This system's
+earnings value is for OTHER agents who don't already have that integration.
 
 ## Other worked examples
 

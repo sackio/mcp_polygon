@@ -1,43 +1,35 @@
-"""Background consumer for mind's live event feeds — a second, independent
+"""Background consumer for mind's live event feed — a second, independent
 data source alongside quantum-engine's NATS feed (live_ingest.py), feeding
 the same generalized trigger-evaluation machinery there via
-live_ingest.evaluate_trigger(). Deliberately does not share reconnect state
-with the NATS consumer or with itself between the two sources below (per the
-plan: "a second, parallel background task").
+live_ingest.evaluate_trigger().
 
-Two sources, both from `mind` (server5 / 192.168.1.42:8117):
+SSE push (`GET /api/events/sse`, mind at server5 / 192.168.1.42:8117) — mind's
+own taxonomy-typed event stream (analyst_action, guidance, m_and_a, price_move,
+legal_regulatory, earnings_result, earnings_announcement, filing_notice, ...).
+Confirmed live 2026-09-27: the documented protocol
+(`.claude/skills/massive-mind/SKILL.md` -> mind's own `mind-events` skill)
+matches real traffic exactly — a leading `: connected at <cursor>` comment
+frame, then `id:`/`event:`/`data:` frames, msgpack nowhere in sight, this
+is plain SSE/JSON. Also saw two real frame types not named in mind-events'
+taxonomy list: `unverifiable` and `freshness` (data-quality/lane-health
+diagnostics, not market events) — passed through like any other event_type
+rather than filtered out, so an operator CAN register a trigger on feed
+health if they want one.
 
-1. SSE push (`GET /api/events/sse`) — mind's own taxonomy-typed event stream
-   (analyst_action, guidance, m_and_a, price_move, legal_regulatory,
-   earnings_result, ...). Confirmed live 2026-09-27: the documented protocol
-   (`.claude/skills/massive-mind/SKILL.md` -> mind's own `mind-events` skill)
-   matches real traffic exactly — a leading `: connected at <cursor>` comment
-   frame, then `id:`/`event:`/`data:` frames, msgpack nowhere in sight, this
-   is plain SSE/JSON. Also saw two real frame types not named in mind-events'
-   taxonomy list: `unverifiable` and `freshness` (data-quality/lane-health
-   diagnostics, not market events) — passed through like any other event_type
-   rather than filtered out, so an operator CAN register a trigger on feed
-   health if they want one.
-2. mind's EXISTING earnings-announce-push sink, tailed as a plain file
-   (/mnt/nas/data/code/tradedesk/projects/earnings/data/announcements.jsonl)
-   rather than intercepting mind's ATC DMs to tradedesk — the file already IS
-   the durable, ordered record of that feed, and tailing it is simpler and
-   more robust from a background asyncio task than trying to observe another
-   seat's ATC traffic.
-
-⛔ tradedesk-earnings' own pipeline (mind -> ATC DM -> announcements.jsonl ->
-thread-tradedesk-12 trading directly off it) is NOT touched, intercepted, or
-duplicated by this module — this is a second, independent READER of the same
-file, purely additive. See massive-triggers skill for why tradedesk-earnings
-itself should keep using its existing bespoke path rather than switch to a
-registered trigger here.
+⛔ 2026-09-28: a second source used to exist here — a plain-file tail of
+mind's earnings-announce-push sink (announcements.jsonl), source name
+"mind_earnings_push". Removed on Ben's explicit instruction after it turned
+out to have two real bugs (a missing bind mount, then an NFS attribute-cache
+staleness — see memo 144b71ed) and mind shipped a proper live SSE event
+(`earnings_announcement`, source `earnings_push`) that reaches the same
+trigger machinery through the SSE path above with no separate code needed.
+Don't re-add a file-tail source for anything mind already emits over SSE.
 """
 import asyncio
 import json
 import logging
 import os
 import time
-from pathlib import Path
 from typing import List, Optional, Tuple
 
 import httpx
@@ -47,11 +39,6 @@ from . import live_ingest
 logger = logging.getLogger("mcp_massive.mind_ingest")
 
 MIND_SSE_URL = os.environ.get("MASSIVE_LIVE_MIND_SSE_URL", "http://192.168.1.42:8117/api/events/sse")
-ANNOUNCEMENTS_JSONL_PATH = os.environ.get(
-    "MASSIVE_LIVE_EARNINGS_JSONL",
-    "/mnt/nas/data/code/tradedesk/projects/earnings/data/announcements.jsonl",
-)
-JSONL_POLL_SECONDS = 2.0
 
 
 def _sanitize_ticker(ticker: str) -> str:
@@ -126,68 +113,7 @@ async def _sse_forever() -> None:
             await asyncio.sleep(5)
 
 
-async def _handle_announcement_line(line: str) -> None:
-    try:
-        row = json.loads(line)
-    except Exception as e:
-        logger.warning("mind_ingest: announcements.jsonl line not JSON: %s (%s)", line[:200], e)
-        return
-    ticker = row.get("ticker")
-    if not ticker:
-        return
-    fields = dict(row)
-    fields["received_unix_ns"] = time.time_ns()
-    await live_ingest.evaluate_trigger("mind_earnings_push", _sanitize_ticker(str(ticker)), None, fields)
-
-
-async def _jsonl_tail_forever() -> None:
-    # 2026-09-28: found live (tradedesk-12) — server4's /mnt/nas is mounted
-    # NFSv4 with acregmin=acregmax=600, a hard 600s file-ATTRIBUTE cache. A
-    # bare stat() on a path NFS has already cached (what the old version of
-    # this function did every poll) can return a size up to 600s stale, which
-    # measured as a ~485s median delivery lag despite polling every 2s and
-    # despite the file itself being written within ~5s of the real event.
-    # NFSv4 close-to-open consistency revalidates on OPEN, not on a bare
-    # stat() of an already-resolved path — tradedesk-12 measured cross-host
-    # append visibility at 1.0s for a reader that re-opens every cycle.
-    # Fix: open() fresh every poll and get size from the freshly-opened
-    # handle (f.seek(0,2)/f.tell()) instead of a separate Path.stat() call.
-    path = Path(ANNOUNCEMENTS_JSONL_PATH)
-    # Start at the CURRENT end of file — this is a live-events feed, not a
-    # backfill tool. Rows already in the file were ingested before this
-    # consumer existed and are readable directly from the file by anyone who
-    # wants the history.
-    last_size = 0
-    try:
-        with path.open("rb") as f:
-            f.seek(0, 2)
-            last_size = f.tell()
-    except FileNotFoundError:
-        last_size = 0
-    while True:
-        try:
-            with path.open("r") as f:
-                f.seek(0, 2)
-                size = f.tell()
-                if size < last_size:
-                    logger.warning("mind_ingest: %s shrank (rotated/truncated) — restarting from the top", path)
-                    last_size = 0
-                if size > last_size:
-                    f.seek(last_size)
-                    new_data = f.read()
-                    last_size = size
-                    for line in new_data.splitlines():
-                        line = line.strip()
-                        if line:
-                            await _handle_announcement_line(line)
-        except FileNotFoundError:
-            pass
-        except Exception:
-            logger.exception("mind_ingest: jsonl tail failed on %s", path)
-        await asyncio.sleep(JSONL_POLL_SECONDS)
-
-
 async def run_forever() -> None:
-    """Entry point: two independent background loops, started once alongside
-    live_ingest.run_forever() in run_server_host.py."""
-    await asyncio.gather(_sse_forever(), _jsonl_tail_forever())
+    """Entry point, started once alongside live_ingest.run_forever() in
+    run_server_host.py."""
+    await _sse_forever()

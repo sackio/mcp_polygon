@@ -2666,8 +2666,8 @@ async def register_live_alert(
       — "instance" is optional; omit to watch every instance seen so far.
       {"kind": "trigger", "source": ..., "tickers": [...], "expr": "...",
        "spec_id": ..., "event_type": ...} — the generalized form. `source` is
-      one of quantum_bar/quantum_trade/quantum_quote/quantum_tape/mind_sse/
-      mind_earnings_push. `tickers` is a required, non-empty list — every
+      one of quantum_bar/quantum_trade/quantum_quote/quantum_tape/mind_sse.
+      `tickers` is a required, non-empty list — every
       trigger must be scoped, never registered against "anything". `spec_id`
       is required only when source is quantum_bar. `event_type` is optional
       (tape events only — filters the six detector kinds sweep/absorption/
