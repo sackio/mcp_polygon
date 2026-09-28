@@ -27,14 +27,38 @@ register_live_alert(
     "tickers": ["AAPL", "MSFT"], # REQUIRED, non-empty — every trigger is scoped, never "anything"
     "expr": "close > 150 and volume > 1000000",
   },
-  notify_to="your-agent-name",  # or "slack:U..."
+  notify_to="your-agent-name",  # or "slack:U..." or "http(s)://..." — see below
 )
 ```
+
+`notify_to` also accepts an `"http://"`/`"https://"` URL — added 2026-09-28 for headless consumers
+(a k8s Deployment placing orders has no live session to receive an ATC DM). Delivered as a plain
+POST: `{alert_id, condition, detail, source, ticker, event_type, fields, fired_unix_ns}`. Same
+best-effort semantics as the ATC path — 5s timeout, logged and dropped on failure, no retry; poll
+`list_my_live_alerts` yourself if you need a stronger guarantee than push.
 
 Fires once via ATC DM to `notify_to` when `expr` first evaluates true (edge-triggered — same
 semantics as the existing `threshold` kind), re-arming only after it goes false again.
 `list_my_live_alerts(owner)` / `cancel_live_alert(alert_id)` manage what you've registered.
 `owner` defaults to `notify_to`.
+
+⛔⛔ **Edge-triggering DROPS REPEATED FIRINGS of the same condition — this disqualifies the
+whole system for any COUNTING rule, not just a rough edge.** Surfaced 2026-09-28 by
+tradedesk-earnings, designing books that arm on "net >= 4 same-side firings" and pyramid on the
+2nd/3rd same-side firing: with `expr="kind == 'sweep'"` on a ticker, two CONSECUTIVE sweep
+events (nothing else interleaved) only fire ONCE — the second evaluates `satisfied=True` again,
+but the alert is already `was_satisfied=True` from the first, so nothing re-notifies. It re-arms
+only once a DIFFERENT-kind event (or a quiet period, if `expr` can express one) makes it false
+in between. A book counting occurrences would arm once and never see the count increment — it
+would look healthy (one real notification) while silently starving on every repeat, a MISS with
+no visible symptom, not a crash. ⇒ **If your rule counts events, or needs every single qualifying
+occurrence rather than "this started being true," `register_live_alert` is the wrong tool.**
+There is currently no raw, ungated event stream through this MCP — consume
+`market.<mkt>.event.<class>.<ticker>` on the engine's NATS bus directly instead (see
+`massive-live`), applying this skill's field-resolution rules (tape price-by-kind, `direction`
+presence-by-kind, ticker sanitization) in your own decoder. This is not a transport limitation
+(no webhook/callback delivery existed as of 2026-09-28 either, a separate real gap for headless
+consumers) — it is a semantics limitation that a delivery-mechanism fix would not have solved.
 
 ## Updating a trigger without hand-tracking its `alert_id` — the `label` field
 

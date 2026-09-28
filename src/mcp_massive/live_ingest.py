@@ -470,7 +470,17 @@ def cancel_alert(alert_id: str) -> Dict[str, Any]:
     return {"alert_id": alert_id, "cancelled": cur.rowcount > 0}
 
 
-async def _fire_alert(rec: dict, detail: str) -> None:
+async def _fire_alert(rec: dict, detail: str, payload: Optional[Dict[str, Any]] = None) -> None:
+    """Delivery target is `rec["notify_to"]`. An "http://"/"https://" value is
+    POSTed to directly as a webhook (added 2026-09-28 for headless consumers —
+    a k8s Deployment placing orders has no live session to receive an ATC DM
+    at all); anything else goes through ATC as before. Same best-effort
+    semantics either way: 5s timeout, logged and dropped on failure, no
+    retry — a consumer that needs delivery guarantees polls list_my_live_alerts
+    itself rather than relying solely on the push."""
+    notify_to = rec["notify_to"]
+    body = dict(payload) if payload else {}
+    body.update({"alert_id": rec["id"], "condition": rec["condition"], "detail": detail})
     content = (
         f"live engine alert fired (id={rec['id']})\n"
         f"condition: {json.dumps(rec['condition'])}\n"
@@ -478,13 +488,16 @@ async def _fire_alert(rec: dict, detail: str) -> None:
     )
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(
-                f"{ATC_URL}/messages",
-                json={"to": rec["notify_to"], "from": ATC_FROM, "subject": "live engine alert", "content": content},
-            )
+            if notify_to.startswith("http://") or notify_to.startswith("https://"):
+                resp = await client.post(notify_to, json=body)
+            else:
+                resp = await client.post(
+                    f"{ATC_URL}/messages",
+                    json={"to": notify_to, "from": ATC_FROM, "subject": "live engine alert", "content": content},
+                )
             resp.raise_for_status()
     except Exception as e:
-        logger.error("live_ingest: failed to deliver alert %s to %s: %s", rec["id"], rec["notify_to"], e)
+        logger.error("live_ingest: failed to deliver alert %s to %s: %s", rec["id"], notify_to, e)
 
 
 def _set_satisfied(rec: dict, satisfied: bool) -> None:
@@ -591,7 +604,12 @@ async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optiona
         satisfied = bool(result)
         was_satisfied = _trigger_ticker_state.get((rec["id"], ticker), False)
         if satisfied and not was_satisfied:
-            await _fire_alert(rec, f"{source}/{ticker} matched `{condition['expr']}` — fields={eval_fields}")
+            await _fire_alert(
+                rec,
+                f"{source}/{ticker} matched `{condition['expr']}` — fields={eval_fields}",
+                payload={"source": source, "ticker": ticker, "event_type": event_type, "fields": eval_fields,
+                         "fired_unix_ns": time.time_ns()},
+            )
             _set_trigger_ticker_satisfied(rec, ticker, True)
         elif not satisfied and was_satisfied:
             _set_trigger_ticker_satisfied(rec, ticker, False)

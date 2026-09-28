@@ -2647,9 +2647,16 @@ async def register_live_alert(
 ) -> Dict[str, Any]:
     """
     Register a persistent alert against the live engine feed, evaluated in
-    this MCP server process and delivered to `notify_to` (an ATC address, e.g.
-    "slack:U..." or an agent name) via an ATC DM when it fires. Survives an
-    MCP server restart — the registry is on disk, not just in memory.
+    this MCP server process and delivered to `notify_to` when it fires.
+    Survives an MCP server restart — the registry is on disk, not just in
+    memory. `notify_to` is either an ATC address (e.g. "slack:U..." or an
+    agent name — delivered as an ATC DM), or an "http://"/"https://" URL —
+    delivered as a plain POST of {alert_id, condition, detail, source,
+    ticker, event_type, fields, fired_unix_ns} for a headless consumer (a
+    k8s Deployment, say) with no live session to receive a DM. Same
+    best-effort semantics either way: no retry, logged and dropped on
+    delivery failure — poll list_my_live_alerts yourself if you need a
+    stronger guarantee than push.
 
     `condition` is one of:
       {"kind": "threshold", "spec_id": ..., "ticker": ..., "field": "close",
