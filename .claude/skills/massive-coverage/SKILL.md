@@ -54,6 +54,20 @@ flatfiles have zero dates before it. **This is a vendor-wide floor, not a per-ti
 date** — QQQ (real listing 1999) and TLT (2002) both show nothing before 2003-09-10 same as
 any other ticker. Current end: latest trading day (checked live via `list_flatfile_dates`).
 
+⛔⛔ **A custom `multiplier` aggregate bucket is NOT session-anchored — it sits on a fixed clock
+grid, not 9:30 ET.** Measured 2026-09-28: `get_aggs`/`list_aggs(multiplier=65, timespan="minute")`
+on AAPL 2024-01-02 returns bucket boundaries at 08:15, 09:20, 10:25 UTC... — none of which is
+14:30 UTC (= 9:30 ET, that day's session open), so the open falls in the MIDDLE of a bucket,
+mixing premarket into the first "regular session" bar. This breaks any strategy assuming N clean
+same-length candles starting exactly at the open (e.g. "6 equal 65-minute candles over the
+390-minute session"). `multiplier=30` happens to land on session open (the 30-min grid coincides
+with :00/:30-past-the-hour, and 9:30 ET is always on that grid in both EST/EDT) — treat this as a
+coincidence of 30 dividing the clock evenly, not a guaranteed vendor behavior, and don't assume it
+holds for other periods. ⇒ For any session-relative custom-period intraday bar, pull 1-minute
+bars, filter to RTH (9:30-16:00 ET) yourself, then resample anchored fresh at 9:30 ET each
+session — never rely on the REST API's native `multiplier` param for a session-relative bar count
+claim.
+
 ## US options (`us_options_opra`)
 
 - **Day aggregates** (trade-derived OHLC/volume): flatfiles continuous **2014-06-02 → current**

@@ -27,6 +27,11 @@ have X" while this MCP's own corpus tools are erroring.
 | **PIVOT** | `resolve_pivot_path`, `get_pivot_file_info`, `read_pivot_rows` | **us_stocks_sip only**, per-ticker | you need one ticker's history — smaller, faster |
 | **RAW** | `resolve_raw_path`, `get_raw_file_info`, `read_raw_rows` | vendor file order, unsorted | the 4 lanes with no sorted/pivot form (`us_options_opra` day/minute_aggs/trades, `us_indices` day_aggs — all stopped 2026-06-02), or you specifically need pre-sort vendor bytes |
 
+⛔ **Neither SORTED nor PIVOT carries a `day_aggs_v1` lane for `us_stocks_sip`.** Confirmed
+2026-09-28 by direct filesystem listing — both only hold `minute_aggs_v1`, `quotes_v1`,
+`trades_v1`. There is no materialized daily-bar corpus at all; REST (`get_aggs`/`list_aggs`
+`timespan=day`, or `get_grouped_daily_aggs`) is the only path for daily equity bars.
+
 ⛔ **Never read a whole file.** A full day of `us_stocks_sip/quotes_v1` is ~10GB/419M rows.
 Call `get_*_file_info` first (row count, row-group count, schema — cheap, no data read), then
 `read_*_rows(row_group=N, columns=[...], limit=..., offset=...)`. `limit` is capped at 20,000
