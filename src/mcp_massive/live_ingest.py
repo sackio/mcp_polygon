@@ -101,6 +101,16 @@ _TRIGGER_EVAL_MAX_SECONDS = float(os.environ.get("MASSIVE_LIVE_TRIGGER_EVAL_MAX_
 # successful evaluations between them, which means every event this trigger
 # has ever seen failed the same way (a typo'd field name, not a None).
 _TRIGGER_MAX_CONSECUTIVE_ERRORS = 20
+# 2026-09-28: a single slow eval used to disable immediately — wrong. Found
+# live, tradedesk.fundamentals alert 9a3ea8e5 (a 6-comparison boolean expr,
+# nothing pathological) disabled on one 223.6ms eval, then again (as 6ff033fc)
+# on one 364ms eval ~90min later, recurring — that's shared-process contention
+# (this evaluator runs inside the one FastMCP process every seat's tool calls
+# go through), not evidence THIS expr is slow. Require N consecutive
+# over-budget evals, same doctrine as the error counter above, before
+# disabling — a real pathological expr (an accidental O(n^2), a huge dict)
+# will still hit this fast since it's slow on every event, not just once.
+_TRIGGER_MAX_CONSECUTIVE_SLOW = int(os.environ.get("MASSIVE_LIVE_TRIGGER_MAX_CONSECUTIVE_SLOW", "5"))
 
 
 def _sanitize_ticker(ticker: str) -> str:
@@ -142,6 +152,10 @@ _trigger_index: Dict[Tuple[str, str], List[dict]] = {}
 # evaluation. In-memory only — a restart re-arms every trigger's counter,
 # which is fine, this is a resource-pathology guard, not a durable record.
 _trigger_error_counts: Dict[str, int] = {}
+# alert_id -> consecutive-over-budget-eval counter, reset to 0 on any eval
+# under _TRIGGER_EVAL_MAX_SECONDS (success or raise, latency is orthogonal to
+# correctness). Same in-memory-only reasoning as the error counter above.
+_trigger_slow_counts: Dict[str, int] = {}
 # (owner, ticker) -> {ref_key: value, f"{ref_key}_updated_unix_ns": ts, ...} —
 # per-owner reference values (Ben, #tradedesk-fundamentals 2026-09-28: "if you
 # need a prior close reference you can set up code to store that for yourself
@@ -190,6 +204,16 @@ def _db() -> sqlite3.Connection:
             )
             """
         )
+        # 2026-09-28: added to an existing table, so CREATE TABLE IF NOT
+        # EXISTS above won't add it on an already-migrated DB — ALTER TABLE
+        # ADD COLUMN isn't itself idempotent in sqlite, hence the try/except.
+        # Set only by _disable_pathological_trigger; an owner's own
+        # cancel_alert()/label-upsert leaves this NULL, which is exactly the
+        # distinction list_alerts uses to decide what's worth surfacing.
+        try:
+            _db_conn.execute("ALTER TABLE live_alerts ADD COLUMN disabled_reason TEXT")
+        except sqlite3.OperationalError:
+            pass
         _db_conn.execute(
             """
             CREATE TABLE IF NOT EXISTS trigger_ticker_state (
@@ -433,9 +457,16 @@ def register_alert(condition: Dict[str, Any], notify_to: str, owner: Optional[st
 
 
 def list_alerts(owner: str) -> List[Dict[str, Any]]:
+    # cancelled=1 rows are included too, but ONLY when disabled_reason is set
+    # (2026-09-28) — an owner's own cancel_alert()/label-upsert leaves that
+    # NULL and stays invisible as before; an auto-disable is the one case
+    # worth surfacing, since the owner otherwise has no way to recover the
+    # condition to re-register it (see tradedesk.fundamentals incident:
+    # "had to rebuild mine from source").
     rows = _db().execute(
         "SELECT id, notify_to, condition_json, created_unix_ns, last_fired_unix_ns, fire_count, "
-        "currently_satisfied FROM live_alerts WHERE owner = ? AND cancelled = 0",
+        "currently_satisfied, disabled_reason FROM live_alerts WHERE owner = ? "
+        "AND (cancelled = 0 OR disabled_reason IS NOT NULL)",
         (owner,),
     ).fetchall()
     out = []
@@ -449,6 +480,11 @@ def list_alerts(owner: str) -> List[Dict[str, Any]]:
             "last_fired_unix_ns": r[4],
             "fire_count": r[5],
         }
+        if r[7]:
+            entry["state"] = "disabled"
+            entry["disabled_reason"] = r[7]
+        else:
+            entry["state"] = "active"
         if condition.get("kind") == "trigger":
             if condition.get("repeat"):
                 # repeat mode fires on every match with no edge-state tracked
@@ -542,12 +578,38 @@ async def _evaluate_threshold_alerts(key: Tuple[str, str], entry: dict) -> None:
 
 async def _disable_pathological_trigger(rec: dict, reason: str) -> None:
     logger.warning("live_ingest: auto-disabling trigger %s: %s", rec["id"], reason)
-    cancel_alert(rec["id"])
+    conn = _db()
+    conn.execute("UPDATE live_alerts SET cancelled = 1, disabled_reason = ? WHERE id = ?", (reason, rec["id"]))
+    conn.commit()
+    _load_alerts_into_index()
     await _fire_alert(
         rec,
         f"This trigger has been AUTO-DISABLED and will not fire again — re-register if you fix the expr. "
-        f"Reason: {reason}",
+        f"Reason: {reason}. It stays visible in list_my_live_alerts with state='disabled' so you can "
+        f"read the condition back to re-register it.",
     )
+
+
+async def _record_slow_eval(rec: dict, elapsed: float, extra: str = "") -> bool:
+    """Track consecutive over-budget evaluations for one trigger; only disable
+    after _TRIGGER_MAX_CONSECUTIVE_SLOW in a row, never on one (2026-09-28 —
+    see the constant's comment for the live incident this fixes). Returns
+    True if the trigger was just disabled, so the caller stops using `rec`."""
+    if elapsed <= _TRIGGER_EVAL_MAX_SECONDS:
+        _trigger_slow_counts[rec["id"]] = 0
+        return False
+    count = _trigger_slow_counts.get(rec["id"], 0) + 1
+    _trigger_slow_counts[rec["id"]] = count
+    if count < _TRIGGER_MAX_CONSECUTIVE_SLOW:
+        return False
+    reason = (
+        f"expr took {elapsed * 1000:.1f}ms on {count} consecutive evaluations "
+        f"(over the {_TRIGGER_EVAL_MAX_SECONDS * 1000:.0f}ms budget){extra}"
+    )
+    await _disable_pathological_trigger(rec, reason)
+    _trigger_slow_counts.pop(rec["id"], None)
+    _trigger_error_counts.pop(rec["id"], None)
+    return True
 
 
 async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optional[str], fields: Dict[str, Any]) -> None:
@@ -564,9 +626,10 @@ async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optiona
     _TRIGGER_MAX_CONSECUTIVE_ERRORS raises IN A ROW with no successful
     evaluation between them (every event this trigger has ever seen failed
     the same way — a typo'd field name, never a real one) gets auto-disabled.
-    A slow evaluation (over _TRIGGER_EVAL_MAX_SECONDS) is disabled immediately,
-    on the first occurrence — that is a real resource-pathology signal, not a
-    per-event data question."""
+    A slow evaluation (over _TRIGGER_EVAL_MAX_SECONDS) only disables after
+    _TRIGGER_MAX_CONSECUTIVE_SLOW in a row — one slow eval is normal
+    contention in this shared process, not evidence THIS expr is slow (see
+    that constant's comment for the live incident that changed this)."""
     for rec in _trigger_index.get((source, ticker), []):
         condition = rec["condition"]
         if condition.get("event_type") and condition["event_type"] != event_type:
@@ -585,11 +648,7 @@ async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optiona
             result = EvalWithCompoundTypes(names=eval_fields).eval(condition["expr"])
         except Exception as e:
             elapsed = time.monotonic() - t0
-            if elapsed > _TRIGGER_EVAL_MAX_SECONDS:
-                await _disable_pathological_trigger(
-                    rec, f"expr raised AND took {elapsed * 1000:.1f}ms (over the {_TRIGGER_EVAL_MAX_SECONDS * 1000:.0f}ms budget): {e}"
-                )
-                _trigger_error_counts.pop(rec["id"], None)
+            if await _record_slow_eval(rec, elapsed, extra=f", and raised: {e}"):
                 continue
             count = _trigger_error_counts.get(rec["id"], 0) + 1
             _trigger_error_counts[rec["id"]] = count
@@ -598,13 +657,11 @@ async def _evaluate_trigger_alerts(source: str, ticker: str, event_type: Optiona
                     rec, f"expr raised on {count} consecutive events with zero successful evaluations: {e}"
                 )
                 _trigger_error_counts.pop(rec["id"], None)
+                _trigger_slow_counts.pop(rec["id"], None)
             continue
         elapsed = time.monotonic() - t0
         _trigger_error_counts[rec["id"]] = 0
-        if elapsed > _TRIGGER_EVAL_MAX_SECONDS:
-            await _disable_pathological_trigger(
-                rec, f"expr took {elapsed * 1000:.1f}ms, over the {_TRIGGER_EVAL_MAX_SECONDS * 1000:.0f}ms budget"
-            )
+        if await _record_slow_eval(rec, elapsed):
             continue
         satisfied = bool(result)
         fire_payload = {"source": source, "ticker": ticker, "event_type": event_type, "fields": eval_fields,
