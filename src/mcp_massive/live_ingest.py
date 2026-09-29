@@ -725,6 +725,43 @@ async def _engine_health_ticker() -> None:
             logger.exception("live_ingest: engine_health tick failed")
 
 
+# 2026-09-29: pure diagnostic, no behavior change. Added while chasing the
+# OOM crash-loop incident (ea47026/ebbebab both wrapped blocking calls in
+# asyncio.to_thread and both crashed in production despite testing clean in
+# isolation) -- system measured that the SAME reverted, unmodified code shows
+# wildly different growth depending on real load level (596MB@15min/628MB@39min
+# during quiet hours vs 2.57GB@25min during heavy desk-agent activity earlier
+# the same evening), meaning growth tracks live request/event volume, not code
+# alone. Rather than keep guessing at a synthetic repro that may never match
+# real conditions, this logs the actual state sizes + RSS on an interval so the
+# NEXT real high-load window gives direct evidence of what's actually growing.
+_MEMORY_DIAG_TICK_SECONDS = int(os.environ.get("MASSIVE_LIVE_MEMORY_DIAG_TICK_SECONDS", "60"))
+
+
+async def _memory_diag_ticker() -> None:
+    import resource
+    import threading
+
+    while True:
+        await asyncio.sleep(_MEMORY_DIAG_TICK_SECONDS)
+        try:
+            rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+            logger.info(
+                "live_ingest: memory_diag rss_mb=%.1f bars=%d history=%d "
+                "engine_instances=%d cross_asset_spec_ids=%d threshold_idx=%d "
+                "trigger_idx=%d trigger_error_counts=%d trigger_slow_counts=%d "
+                "reference_idx=%d trigger_ticker_state=%d threads=%d event_count=%d",
+                rss_mb, len(_state.bars), len(_state.history),
+                len(_state.engine_instances), len(_state.cross_asset_spec_ids),
+                len(_threshold_index), len(_trigger_index),
+                len(_trigger_error_counts), len(_trigger_slow_counts),
+                len(_reference_index), len(_trigger_ticker_state),
+                threading.active_count(), _state.event_count,
+            )
+        except Exception:
+            logger.exception("live_ingest: memory_diag tick failed")
+
+
 def _entry_from_bar_payload(market: str, spec_id: str, ticker: str, payload: dict, now_ns: int) -> dict:
     # oa/ha are only present in wire_fields when true (the msgpack encoder
     # omits false/default fields) — a missing key means "not absent", not
@@ -930,6 +967,7 @@ async def run_forever() -> None:
     _load_references_into_index()
     _load_trigger_ticker_state()
     asyncio.create_task(_engine_health_ticker())
+    asyncio.create_task(_memory_diag_ticker())
     while True:
         try:
             nc = await nats.connect(
