@@ -738,26 +738,85 @@ async def _engine_health_ticker() -> None:
 _MEMORY_DIAG_TICK_SECONDS = int(os.environ.get("MASSIVE_LIVE_MEMORY_DIAG_TICK_SECONDS", "60"))
 
 
+def _current_rss_mb() -> float:
+    """Current RSS in MB, from /proc/self/status VmRSS -- NOT
+    resource.getrusage().ru_maxrss, which is PEAK rss and can only ever
+    stay flat or increase for the life of the process. The original
+    version of this ticker used ru_maxrss, which structurally cannot show
+    a drop even if current RSS actually falls between samples -- caught
+    2026-09-29 while extending this for the malloc_trim test below (a
+    trim's effect is invisible on a metric that can't decrease)."""
+    with open("/proc/self/status") as f:
+        for line in f:
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) / 1024.0
+    return -1.0
+
+
+def _store_stats() -> Tuple[int, int]:
+    """(n_tables, total_rows) in the shared query_data DataFrameStore, via a
+    deferred import of server.py (avoids a circular import at module load --
+    server.py imports live_ingest, not the other way around). Added
+    2026-09-29 to test the OOM lead: store.py's persistent table storage is
+    plain Python (Table = column-oriented dict[str, list], see its own
+    docstring "replaces pl.DataFrame") -- sqlite3 is used only transiently,
+    one fresh :memory: connection per query, closed in a finally block. So
+    there is no live sqlite3 connection here to run PRAGMA page_count /
+    freelist_count against; table/row counts are the Python-level
+    equivalent of what system asked for."""
+    try:
+        from . import server as _server_mod
+        store = _server_mod._store
+        if store is None:
+            return 0, 0
+        n_tables = len(store._tables)
+        total_rows = 0
+        for table, _ts in store._tables.values():
+            total_rows += len(table.data[table.columns[0]]) if table.columns else 0
+        return n_tables, total_rows
+    except Exception:
+        logger.exception("live_ingest: memory_diag store_stats failed")
+        return -1, -1
+
+
 async def _memory_diag_ticker() -> None:
-    import resource
+    import ctypes
     import threading
+
+    libc = None
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+    except Exception:
+        logger.warning("live_ingest: memory_diag malloc_trim unavailable (no libc.so.6)")
 
     while True:
         await asyncio.sleep(_MEMORY_DIAG_TICK_SECONDS)
         try:
-            rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+            rss_mb = _current_rss_mb()
+            n_tables, total_rows = _store_stats()
             logger.info(
-                "live_ingest: memory_diag rss_mb=%.1f bars=%d history=%d "
+                "live_ingest: memory_diag rss_mb=%.1f n_tables=%d total_rows=%d "
+                "bars=%d history=%d "
                 "engine_instances=%d cross_asset_spec_ids=%d threshold_idx=%d "
                 "trigger_idx=%d trigger_error_counts=%d trigger_slow_counts=%d "
                 "reference_idx=%d trigger_ticker_state=%d threads=%d event_count=%d",
-                rss_mb, len(_state.bars), len(_state.history),
+                rss_mb, n_tables, total_rows, len(_state.bars), len(_state.history),
                 len(_state.engine_instances), len(_state.cross_asset_spec_ids),
                 len(_threshold_index), len(_trigger_index),
                 len(_trigger_error_counts), len(_trigger_slow_counts),
                 len(_reference_index), len(_trigger_ticker_state),
                 threading.active_count(), _state.event_count,
             )
+            if libc is not None:
+                try:
+                    libc.malloc_trim(0)
+                    rss_after_trim_mb = _current_rss_mb()
+                    logger.info(
+                        "live_ingest: memory_diag rss_after_trim_mb=%.1f delta_mb=%.1f",
+                        rss_after_trim_mb, rss_after_trim_mb - rss_mb,
+                    )
+                except Exception:
+                    logger.exception("live_ingest: memory_diag malloc_trim failed")
         except Exception:
             logger.exception("live_ingest: memory_diag tick failed")
 
