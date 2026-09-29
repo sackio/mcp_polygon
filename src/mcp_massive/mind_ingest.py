@@ -51,12 +51,23 @@ MIND_SSE_URL = os.environ.get("MASSIVE_LIVE_MIND_SSE_URL", "http://192.168.1.42:
 MIND_MAX_STALENESS_HOURS = float(os.environ.get("MASSIVE_LIVE_MIND_MAX_STALENESS_HOURS", "24"))
 
 
+import re
+
+_MIND_TICKER_UNSAFE = re.compile(r"[\s*>]+")
+
+
 def _sanitize_ticker(ticker: str) -> str:
     """Same normalization as live_ingest._sanitize_ticker (kept local rather
     than importing a private name cross-module) — a trigger registered
     against "BRK.B" must match mind events tagged the same way the quantum
-    wire sanitizes symbols."""
-    return ticker.replace(".", "-")
+    wire sanitizes symbols. Also collapses whitespace/`*`/`>` (kept in sync
+    with mind_relay/relay.py's copy, 2026-09-29 -- `filing_notice`'s
+    `subject` fallback is sometimes a multi-word entity name, not a ticker;
+    this module doesn't build NATS subjects so it never crashed on it, but
+    the two copies are documented as staying identical)."""
+    s = ticker.replace(".", "-")
+    s = _MIND_TICKER_UNSAFE.sub("_", s).strip("_")
+    return s or "_FEED"
 
 
 def _parse_sse_frame(lines: List[str]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
