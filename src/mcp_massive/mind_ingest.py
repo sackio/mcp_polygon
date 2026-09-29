@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 import httpx
@@ -39,6 +40,15 @@ from . import live_ingest
 logger = logging.getLogger("mcp_massive.mind_ingest")
 
 MIND_SSE_URL = os.environ.get("MASSIVE_LIVE_MIND_SSE_URL", "http://192.168.1.42:8117/api/events/sse")
+
+# 2026-09-29: mind can replay old (backfilled / re-extracted) events on the
+# live SSE stream with a fresh extracted_at but a stale observed_at -- found
+# by tradedesk-13 (CRBP m_and_a, bz_61058148: observed_at/seen_at 2026-08-07
+# 20:46, extracted_at 2026-09-29 01:23, a 7-week-old ATM share-sale agreement
+# republished as live). A trigger's expr has no access to "now" so an owner
+# can't filter this themselves -- gate it here, before evaluate_trigger ever
+# sees it. See memo (massive-live-mind-staleness).
+MIND_MAX_STALENESS_HOURS = float(os.environ.get("MASSIVE_LIVE_MIND_MAX_STALENESS_HOURS", "24"))
 
 
 def _sanitize_ticker(ticker: str) -> str:
@@ -73,6 +83,22 @@ async def _handle_sse_frame(event_type: Optional[str], data: Optional[str]) -> N
     except Exception as e:
         logger.warning("mind_ingest: SSE data not JSON for event_type=%r: %s", event_type, e)
         return
+    observed_at_raw = payload.get("observed_at")
+    if observed_at_raw:
+        try:
+            observed_dt = datetime.fromisoformat(str(observed_at_raw).replace("Z", "+00:00"))
+            if observed_dt.tzinfo is None:
+                observed_dt = observed_dt.replace(tzinfo=timezone.utc)
+            age_hours = (datetime.now(timezone.utc) - observed_dt).total_seconds() / 3600.0
+            if age_hours > MIND_MAX_STALENESS_HOURS:
+                logger.info(
+                    "mind_ingest: dropping stale event, event_type=%r id=%s observed_at=%s age=%.1fh "
+                    "(threshold %.0fh) -- backfill/re-extraction, not live",
+                    event_type, payload.get("id"), observed_at_raw, age_hours, MIND_MAX_STALENESS_HOURS,
+                )
+                return
+        except Exception:
+            pass  # unparseable observed_at doesn't block delivery -- fail open
     ticker = payload.get("ticker") or payload.get("subject")
     if not ticker:
         # Diagnostic frames (unverifiable, freshness) and any taxonomy event
