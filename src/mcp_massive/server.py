@@ -1,4 +1,3 @@
-import asyncio
 import atexit
 import logging
 import os
@@ -102,8 +101,7 @@ async def get_aggs(
     List aggregate bars for a ticker over a given date range in custom time window sizes.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_aggs,
+        results = polygon_client.get_aggs(
             ticker=ticker,
             multiplier=multiplier,
             timespan=timespan,
@@ -139,8 +137,7 @@ async def list_aggs(
     Iterate through aggregate bars for a ticker over a given date range.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_aggs,
+        results = polygon_client.list_aggs(
             ticker=ticker,
             multiplier=multiplier,
             timespan=timespan,
@@ -172,8 +169,7 @@ async def get_grouped_daily_aggs(
     Get grouped daily bars for entire market for a specific date.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_grouped_daily_aggs,
+        results = polygon_client.get_grouped_daily_aggs(
             date=date,
             adjusted=adjusted,
             include_otc=include_otc,
@@ -200,8 +196,7 @@ async def get_daily_open_close_agg(
     Get daily open, close, high, and low for a specific ticker and date.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_daily_open_close_agg,
+        results = polygon_client.get_daily_open_close_agg(
             ticker=ticker, date=date, adjusted=adjusted, params=params, raw=True
         )
 
@@ -221,8 +216,7 @@ async def get_previous_close_agg(
     Get previous day's open, close, high, and low for a specific ticker.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_previous_close_agg,
+        results = polygon_client.get_previous_close_agg(
             ticker=ticker, adjusted=adjusted, params=params, raw=True
         )
 
@@ -249,8 +243,7 @@ async def list_trades(
     Get trades for a ticker symbol.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_trades,
+        results = polygon_client.list_trades(
             ticker=ticker,
             timestamp=timestamp,
             timestamp_lt=timestamp_lt,
@@ -279,9 +272,7 @@ async def get_last_trade(
     Get the most recent trade for a ticker symbol.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_last_trade, ticker=ticker, params=params, raw=True,
-        )
+        results = polygon_client.get_last_trade(ticker=ticker, params=params, raw=True)
 
         data_str = results.data.decode("utf-8")
         return json.loads(data_str)
@@ -299,8 +290,7 @@ async def get_last_crypto_trade(
     Get the most recent trade for a crypto pair.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_last_crypto_trade,
+        results = polygon_client.get_last_crypto_trade(
             from_=from_, to=to, params=params, raw=True
         )
 
@@ -327,8 +317,7 @@ async def list_quotes(
     Get quotes for a ticker symbol.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_quotes,
+        results = polygon_client.list_quotes(
             ticker=ticker,
             timestamp=timestamp,
             timestamp_lt=timestamp_lt,
@@ -357,9 +346,7 @@ async def get_last_quote(
     Get the most recent quote for a ticker symbol.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_last_quote, ticker=ticker, params=params, raw=True,
-        )
+        results = polygon_client.get_last_quote(ticker=ticker, params=params, raw=True)
 
         data_str = results.data.decode("utf-8")
         return json.loads(data_str)
@@ -377,8 +364,7 @@ async def get_last_forex_quote(
     Get the most recent forex quote.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_last_forex_quote,
+        results = polygon_client.get_last_forex_quote(
             from_=from_, to=to, params=params, raw=True
         )
 
@@ -400,8 +386,7 @@ async def get_real_time_currency_conversion(
     Get real-time currency conversion.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_real_time_currency_conversion,
+        results = polygon_client.get_real_time_currency_conversion(
             from_=from_,
             to=to,
             amount=amount,
@@ -429,8 +414,7 @@ async def list_universal_snapshots(
     Get universal snapshots for multiple assets of a specific type.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_universal_snapshots,
+        results = polygon_client.list_universal_snapshots(
             type=type,
             ticker_any_of=ticker_any_of,
             order=order,
@@ -457,8 +441,7 @@ async def get_snapshot_all(
     Get a snapshot of all tickers in a market.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_snapshot_all,
+        results = polygon_client.get_snapshot_all(
             market_type=market_type,
             tickers=tickers,
             include_otc=include_otc,
@@ -483,8 +466,7 @@ async def get_snapshot_direction(
     Get gainers or losers for a market.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_snapshot_direction,
+        results = polygon_client.get_snapshot_direction(
             market_type=market_type,
             direction=direction,
             include_otc=include_otc,
@@ -508,8 +490,7 @@ async def get_snapshot_ticker(
     Get snapshot for a specific ticker.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_snapshot_ticker,
+        results = polygon_client.get_snapshot_ticker(
             market_type=market_type, ticker=ticker, params=params, raw=True
         )
 
@@ -529,8 +510,7 @@ async def get_snapshot_option(
     Get snapshot for a specific option contract.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_snapshot_option,
+        results = polygon_client.get_snapshot_option(
             underlying_asset=underlying_asset,
             option_contract=option_contract,
             params=params,
@@ -552,8 +532,7 @@ async def get_snapshot_crypto_book(
     Get snapshot for a crypto ticker's order book.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_snapshot_crypto_book,
+        results = polygon_client.get_snapshot_crypto_book(
             ticker=ticker, params=params, raw=True
         )
 
@@ -571,9 +550,7 @@ async def get_market_holidays(
     Get upcoming market holidays and their open/close times.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_market_holidays, params=params, raw=True,
-        )
+        results = polygon_client.get_market_holidays(params=params, raw=True)
 
         data_str = results.data.decode("utf-8")
         return json.loads(data_str)
@@ -589,9 +566,7 @@ async def get_market_status(
     Get current trading status of exchanges and financial markets.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_market_status, params=params, raw=True,
-        )
+        results = polygon_client.get_market_status(params=params, raw=True)
 
         data_str = results.data.decode("utf-8")
         return json.loads(data_str)
@@ -668,8 +643,7 @@ async def list_tickers(
     Query supported ticker symbols across stocks, indices, forex, and crypto.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_tickers,
+        results = polygon_client.list_tickers(
             ticker=ticker,
             type=type,
             market=market,
@@ -702,8 +676,7 @@ async def get_ticker_details(
     Get detailed information about a specific ticker.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_ticker_details,
+        results = polygon_client.get_ticker_details(
             ticker=ticker, date=date, params=params, raw=True
         )
 
@@ -726,8 +699,7 @@ async def list_ticker_news(
     Get recent news articles for a stock ticker.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_ticker_news,
+        results = polygon_client.list_ticker_news(
             ticker=ticker,
             published_utc=published_utc,
             limit=limit,
@@ -753,8 +725,7 @@ async def get_ticker_types(
     List all ticker types supported by Polygon.io.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_ticker_types,
+        results = polygon_client.get_ticker_types(
             asset_class=asset_class, locale=locale, params=params, raw=True
         )
 
@@ -776,8 +747,7 @@ async def list_splits(
     Get historical stock splits.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_splits,
+        results = polygon_client.list_splits(
             ticker=ticker,
             execution_date=execution_date,
             reverse_split=reverse_split,
@@ -805,8 +775,7 @@ async def list_dividends(
     Get historical cash dividends.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_dividends,
+        results = polygon_client.list_dividends(
             ticker=ticker,
             ex_dividend_date=ex_dividend_date,
             frequency=frequency,
@@ -834,8 +803,7 @@ async def list_conditions(
     List conditions used by Polygon.io.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_conditions,
+        results = polygon_client.list_conditions(
             asset_class=asset_class,
             data_type=data_type,
             id=id,
@@ -860,8 +828,7 @@ async def get_exchanges(
     List exchanges known by Polygon.io.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_exchanges,
+        results = polygon_client.get_exchanges(
             asset_class=asset_class, locale=locale, params=params, raw=True
         )
 
@@ -899,8 +866,7 @@ async def list_stock_financials(
     Get fundamental financial data for companies.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.vx.list_stock_financials,
+        results = polygon_client.vx.list_stock_financials(
             ticker=ticker,
             cik=cik,
             company_name=company_name,
@@ -949,8 +915,7 @@ async def list_ipos(
     Retrieve upcoming or historical IPOs.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.vx.list_ipos,
+        results = polygon_client.vx.list_ipos(
             ticker=ticker,
             listing_date=listing_date,
             listing_date_lt=listing_date_lt,
@@ -988,8 +953,7 @@ async def list_short_interest(
     Retrieve short interest data for stocks.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_short_interest,
+        results = polygon_client.list_short_interest(
             ticker=ticker,
             settlement_date=settlement_date,
             settlement_date_lt=settlement_date_lt,
@@ -1026,8 +990,7 @@ async def list_short_volume(
     Retrieve short volume data for stocks.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_short_volume,
+        results = polygon_client.list_short_volume(
             ticker=ticker,
             date=date,
             date_lt=date_lt,
@@ -1064,8 +1027,7 @@ async def list_treasury_yields(
     Retrieve treasury yield data.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_treasury_yields,
+        results = polygon_client.list_treasury_yields(
             date=date,
             date_lt=date_lt,
             date_lte=date_lte,
@@ -1100,8 +1062,7 @@ async def list_inflation(
     Get inflation data from the Federal Reserve.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_inflation,
+        results = polygon_client.list_inflation(
             date=date,
             date_any_of=date_any_of,
             date_gt=date_gt,
@@ -1172,8 +1133,7 @@ async def list_benzinga_analyst_insights(
     List Benzinga analyst insights.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_benzinga_analyst_insights,
+        results = polygon_client.list_benzinga_analyst_insights(
             date=date,
             date_any_of=date_any_of,
             date_gt=date_gt,
@@ -1262,8 +1222,7 @@ async def list_benzinga_analysts(
     List Benzinga analysts.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_benzinga_analysts,
+        results = polygon_client.list_benzinga_analysts(
             benzinga_id=benzinga_id,
             benzinga_id_any_of=benzinga_id_any_of,
             benzinga_id_gt=benzinga_id_gt,
@@ -1315,8 +1274,7 @@ async def list_benzinga_consensus_ratings(
     List Benzinga consensus ratings for a ticker.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_benzinga_consensus_ratings,
+        results = polygon_client.list_benzinga_consensus_ratings(
             ticker=ticker,
             date=date,
             date_gt=date_gt,
@@ -1398,8 +1356,7 @@ async def list_benzinga_earnings(
     List Benzinga earnings.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_benzinga_earnings,
+        results = polygon_client.list_benzinga_earnings(
             date=date,
             date_any_of=date_any_of,
             date_gt=date_gt,
@@ -1482,8 +1439,7 @@ async def list_benzinga_firms(
     List Benzinga firms.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_benzinga_firms,
+        results = polygon_client.list_benzinga_firms(
             benzinga_id=benzinga_id,
             benzinga_id_any_of=benzinga_id_any_of,
             benzinga_id_gt=benzinga_id_gt,
@@ -1554,8 +1510,7 @@ async def list_benzinga_guidance(
     List Benzinga guidance.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_benzinga_guidance,
+        results = polygon_client.list_benzinga_guidance(
             date=date,
             date_any_of=date_any_of,
             date_gt=date_gt,
@@ -1647,8 +1602,7 @@ async def list_benzinga_news(
     List Benzinga news.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_benzinga_news,
+        results = polygon_client.list_benzinga_news(
             published=published,
             published_any_of=published_any_of,
             published_gt=published_gt,
@@ -1752,8 +1706,7 @@ async def list_benzinga_ratings(
     List Benzinga ratings.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_benzinga_ratings,
+        results = polygon_client.list_benzinga_ratings(
             date=date,
             date_any_of=date_any_of,
             date_gt=date_gt,
@@ -1837,8 +1790,7 @@ async def list_futures_aggregates(
     Get aggregates for a futures contract in a given time range.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_futures_aggregates,
+        results = polygon_client.list_futures_aggregates(
             ticker=ticker,
             resolution=resolution,
             window_start=window_start,
@@ -1874,8 +1826,7 @@ async def list_futures_contracts(
     Get a paginated list of futures contracts.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_futures_contracts,
+        results = polygon_client.list_futures_contracts(
             product_code=product_code,
             first_trade_date=first_trade_date,
             last_trade_date=last_trade_date,
@@ -1904,8 +1855,7 @@ async def get_futures_contract_details(
     Get details for a single futures contract at a specified point in time.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_futures_contract_details,
+        results = polygon_client.get_futures_contract_details(
             ticker=ticker,
             as_of=as_of,
             params=params,
@@ -1937,8 +1887,7 @@ async def list_futures_products(
     Get a list of futures products (including combos).
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_futures_products,
+        results = polygon_client.list_futures_products(
             name=name,
             name_search=name_search,
             as_of=as_of,
@@ -1971,8 +1920,7 @@ async def get_futures_product_details(
     Get details for a single futures product as it was at a specific day.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_futures_product_details,
+        results = polygon_client.get_futures_product_details(
             product_code=product_code,
             type=type,
             as_of=as_of,
@@ -2007,8 +1955,7 @@ async def list_futures_quotes(
     Get quotes for a futures contract in a given time range.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_futures_quotes,
+        results = polygon_client.list_futures_quotes(
             ticker=ticker,
             timestamp=timestamp,
             timestamp_lt=timestamp_lt,
@@ -2053,8 +2000,7 @@ async def list_futures_trades(
     Get trades for a futures contract in a given time range.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_futures_trades,
+        results = polygon_client.list_futures_trades(
             ticker=ticker,
             timestamp=timestamp,
             timestamp_lt=timestamp_lt,
@@ -2090,8 +2036,7 @@ async def list_futures_schedules(
     Get trading schedules for multiple futures products on a specific date.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_futures_schedules,
+        results = polygon_client.list_futures_schedules(
             session_end_date=session_end_date,
             trading_venue=trading_venue,
             limit=limit,
@@ -2122,8 +2067,7 @@ async def list_futures_schedules_by_product_code(
     Get schedule data for a single futures product across many trading dates.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_futures_schedules_by_product_code,
+        results = polygon_client.list_futures_schedules_by_product_code(
             product_code=product_code,
             session_end_date=session_end_date,
             session_end_date_lt=session_end_date_lt,
@@ -2154,8 +2098,7 @@ async def list_futures_market_statuses(
     Get market statuses for futures products.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.list_futures_market_statuses,
+        results = polygon_client.list_futures_market_statuses(
             product_code_any_of=product_code_any_of,
             product_code=product_code,
             limit=limit,
@@ -2192,8 +2135,7 @@ async def get_futures_snapshot(
     Get snapshots for futures contracts.
     """
     try:
-        results = await asyncio.to_thread(
-            polygon_client.get_futures_snapshot,
+        results = polygon_client.get_futures_snapshot(
             ticker=ticker,
             ticker_any_of=ticker_any_of,
             ticker_gt=ticker_gt,
@@ -2426,7 +2368,7 @@ async def resolve_corpus_path(cluster: str, lane: str, date: str) -> Dict[str, A
     `date` is YYYY-MM-DD. Returns whether the file exists and its size.
     """
     try:
-        return await asyncio.to_thread(corpus.resolve_path, cluster, lane, date)
+        return corpus.resolve_path(cluster, lane, date)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2439,7 +2381,7 @@ async def get_corpus_file_info(cluster: str, lane: str, date: str) -> Dict[str, 
     row data. Use this before read_corpus_rows to plan which row group to read.
     """
     try:
-        return await asyncio.to_thread(corpus.get_file_info, cluster, lane, date)
+        return corpus.get_file_info(cluster, lane, date)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2461,7 +2403,7 @@ async def read_corpus_rows(
     offset/limit slice inside it (limit capped at 20,000 rows per call).
     """
     try:
-        return await asyncio.to_thread(corpus.read_rows, cluster, lane, date, row_group, columns, limit, offset)
+        return corpus.read_rows(cluster, lane, date, row_group, columns, limit, offset)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2474,7 +2416,7 @@ async def resolve_pivot_path(lane: str, ticker: str, date: str) -> Dict[str, Any
     YYYY-MM-DD.
     """
     try:
-        return await asyncio.to_thread(corpus.resolve_pivot_path, lane, ticker, date)
+        return corpus.resolve_pivot_path(lane, ticker, date)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2486,7 +2428,7 @@ async def get_pivot_file_info(lane: str, ticker: str, date: str) -> Dict[str, An
     row-group count, column schema — without reading any row data.
     """
     try:
-        return await asyncio.to_thread(corpus.get_pivot_file_info, lane, ticker, date)
+        return corpus.get_pivot_file_info(lane, ticker, date)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2507,7 +2449,7 @@ async def read_pivot_rows(
     are a single row group; check get_pivot_file_info first if unsure.
     """
     try:
-        return await asyncio.to_thread(corpus.read_pivot_rows, lane, ticker, date, row_group, columns, limit, offset)
+        return corpus.read_pivot_rows(lane, ticker, date, row_group, columns, limit, offset)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2523,7 +2465,7 @@ async def resolve_raw_path(cluster: str, lane: str, date: str) -> Dict[str, Any]
     comes back false on a lane that is actually there.
     """
     try:
-        return await asyncio.to_thread(corpus.resolve_raw_path, cluster, lane, date)
+        return corpus.resolve_raw_path(cluster, lane, date)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2535,7 +2477,7 @@ async def get_raw_file_info(cluster: str, lane: str, date: str) -> Dict[str, Any
     column schema — without reading any row data.
     """
     try:
-        return await asyncio.to_thread(corpus.get_raw_file_info, cluster, lane, date)
+        return corpus.get_raw_file_info(cluster, lane, date)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2556,7 +2498,7 @@ async def read_raw_rows(
     timestamp-sorted — prefer the sorted-corpus tools for anything order-sensitive.
     """
     try:
-        return await asyncio.to_thread(corpus.read_raw_rows, cluster, lane, date, row_group, columns, limit, offset)
+        return corpus.read_raw_rows(cluster, lane, date, row_group, columns, limit, offset)
     except Exception as e:
         return {"error": str(e)}
 
