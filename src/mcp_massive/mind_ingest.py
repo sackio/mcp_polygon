@@ -99,6 +99,20 @@ async def _handle_sse_frame(event_type: Optional[str], data: Optional[str]) -> N
                 return
         except Exception:
             pass  # unparseable observed_at doesn't block delivery -- fail open
+    fields = dict(payload)
+    fields["received_unix_ns"] = time.time_ns()
+    # 2026-09-29: `article` frames carry a PLURAL `tickers` array, not the
+    # singular `ticker`/`subject` field every other event_type uses -- found
+    # while building the standalone mind-event relay (fork report), which
+    # showed every article frame landing under the _FEED pseudo-ticker here
+    # instead of its real ticker(s), silently breaking any per-ticker trigger
+    # registered against event_type="article". Fan out once per named ticker
+    # when the plural form is present.
+    tickers_field = payload.get("tickers")
+    if isinstance(tickers_field, list) and tickers_field:
+        for t in tickers_field:
+            await live_ingest.evaluate_trigger("mind_sse", _sanitize_ticker(str(t)), event_type, fields)
+        return
     ticker = payload.get("ticker") or payload.get("subject")
     if not ticker:
         # Diagnostic frames (unverifiable, freshness) and any taxonomy event
@@ -106,8 +120,6 @@ async def _handle_sse_frame(event_type: Optional[str], data: Optional[str]) -> N
         # exposed under a fixed pseudo-ticker rather than dropped, so a
         # data-quality trigger is still possible to register.
         ticker = "_FEED"
-    fields = dict(payload)
-    fields["received_unix_ns"] = time.time_ns()
     await live_ingest.evaluate_trigger("mind_sse", _sanitize_ticker(str(ticker)), event_type, fields)
 
 
