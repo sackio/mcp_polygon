@@ -996,14 +996,55 @@ async def _on_meta(msg) -> None:
     }
 
 
+# 2026-09-30: OOM root-caused by `system` to the `market.*.indicator.>`
+# subscription -- quantum-engine shipped 565 indicators/ticker-spec live
+# 2026-09-30 12:16 ET, and nothing downstream ever consumed indicator
+# messages: `_on_indicator` only increments a counter, and "quantum_indicator"
+# has never been a valid trigger source (see _TRIGGER_SOURCES above -- only
+# quantum_bar/quantum_trade/quantum_quote/quantum_tape/mind_sse are). The
+# subscription was pure overhead even before today; today's volume increase
+# pushed the connection into a chronic slow-consumer state (server-measured:
+# dropped and reconnecting ~2x/min), and each reconnect cycle leaked steady
+# memory (~1.3 GB/h) until the 16G cgroup cap OOM-killed the process at 11:01
+# ET. Dropping this subscription removes the highest-volume firehose that
+# nothing used, which should also stop the reconnect storm itself, not just
+# its symptom. If indicator data is ever needed by a real trigger source,
+# add it back deliberately with its own pending limits, not as a blanket `>`.
+#
+# Explicit pending_msgs_limit/pending_bytes_limit (lower than nats-py's own
+# defaults of 524288 msgs / 128MB) on the subscriptions that remain, plus a
+# logged, counted drop via _on_nats_error's SlowConsumerError branch below --
+# so a future volume spike on bar/event/meta degrades as a visible, bounded
+# drop instead of an unbounded pending-buffer growth repeating this incident.
+_SUB_PENDING_MSGS_LIMIT = 65536
+_SUB_PENDING_BYTES_LIMIT = 32 * 1024 * 1024
+_slow_consumer_drops: Dict[str, int] = {}
+
+
 async def _subscribe_all(nc: "nats.aio.client.Client") -> None:
-    await nc.subscribe("market.*.bar.>", cb=_on_bar)
-    await nc.subscribe("market.*.event.>", cb=_on_event)
-    await nc.subscribe("market.*.indicator.>", cb=_on_indicator)
-    await nc.subscribe("market.meta.engine.>", cb=_on_meta)
+    await nc.subscribe(
+        "market.*.bar.>", cb=_on_bar,
+        pending_msgs_limit=_SUB_PENDING_MSGS_LIMIT, pending_bytes_limit=_SUB_PENDING_BYTES_LIMIT,
+    )
+    await nc.subscribe(
+        "market.*.event.>", cb=_on_event,
+        pending_msgs_limit=_SUB_PENDING_MSGS_LIMIT, pending_bytes_limit=_SUB_PENDING_BYTES_LIMIT,
+    )
+    await nc.subscribe(
+        "market.meta.engine.>", cb=_on_meta,
+        pending_msgs_limit=_SUB_PENDING_MSGS_LIMIT, pending_bytes_limit=_SUB_PENDING_BYTES_LIMIT,
+    )
 
 
 async def _on_nats_error(e: Exception) -> None:
+    if isinstance(e, nats.errors.SlowConsumerError):
+        subject = getattr(getattr(e, "sub", None), "subject", None) or "unknown"
+        _slow_consumer_drops[subject] = _slow_consumer_drops.get(subject, 0) + 1
+        logger.warning(
+            "live_ingest: slow consumer dropped messages on %r (count=%d total for this subject)",
+            subject, _slow_consumer_drops[subject],
+        )
+        return
     logger.warning("live_ingest: NATS error: %s", e)
 
 
