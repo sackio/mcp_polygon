@@ -1019,6 +1019,16 @@ async def _on_meta(msg) -> None:
 _SUB_PENDING_MSGS_LIMIT = 65536
 _SUB_PENDING_BYTES_LIMIT = 32 * 1024 * 1024
 _slow_consumer_drops: Dict[str, int] = {}
+# 2026-10-01: nats-py calls error_cb once PER DROPPED MESSAGE, not once per
+# incident -- an overnight volume spike on market.*.event.> produced 1.38M+
+# log lines (1 per drop) in a single session, which saturated the process
+# badly enough that the HTTP server stopped answering requests (container
+# stayed up, not OOM-killed, but unreachable) while still not causing the
+# memory leak this subscription-limit change was built to catch. Logging
+# itself became the outage. Rate-limited to one line per subject per minute;
+# _slow_consumer_drops still increments on every drop for an accurate count.
+_SLOW_CONSUMER_LOG_INTERVAL_SECONDS = 60.0
+_slow_consumer_last_logged: Dict[str, float] = {}
 
 
 async def _subscribe_all(nc: "nats.aio.client.Client") -> None:
@@ -1040,10 +1050,14 @@ async def _on_nats_error(e: Exception) -> None:
     if isinstance(e, nats.errors.SlowConsumerError):
         subject = getattr(getattr(e, "sub", None), "subject", None) or "unknown"
         _slow_consumer_drops[subject] = _slow_consumer_drops.get(subject, 0) + 1
-        logger.warning(
-            "live_ingest: slow consumer dropped messages on %r (count=%d total for this subject)",
-            subject, _slow_consumer_drops[subject],
-        )
+        now = time.monotonic()
+        last = _slow_consumer_last_logged.get(subject, 0.0)
+        if now - last >= _SLOW_CONSUMER_LOG_INTERVAL_SECONDS:
+            _slow_consumer_last_logged[subject] = now
+            logger.warning(
+                "live_ingest: slow consumer dropped messages on %r (count=%d total for this subject)",
+                subject, _slow_consumer_drops[subject],
+            )
         return
     logger.warning("live_ingest: NATS error: %s", e)
 
