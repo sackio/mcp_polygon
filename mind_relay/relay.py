@@ -30,6 +30,19 @@ Staleness gate: identical to mind_ingest.py's (observed_at older than
 MIND_MAX_STALENESS_HOURS is dropped, fail-open on unparseable timestamps) --
 this relay must not reintroduce the backfill-leaking-onto-live incident that
 gate was built to fix.
+
+Liveness heartbeat (added 2026-10-02, Ben's directive via #tradedesk-rl
+"things need to be hardened"): a 17.7h total publish stall (stream hit its
+size ceiling, see nats.conf/relay.py max_bytes history) was indistinguishable
+from a quiet news day to every consumer and to this relay's own logs -- the
+only signal was an exception caught and logged per-message, which nobody was
+watching. Core-NATS publish (not JetStream -- deliberately outside the
+mind.events.> stream, so it costs no storage and isn't subject to the same
+ceiling) on MIND_RELAY_HEARTBEAT_SUBJECT every HEARTBEAT_INTERVAL_SECONDS,
+same pattern as quantum-engine's own `market.meta.engine.>` republish. Any
+consumer can now answer "is this relay alive and actually delivering" without
+asking a human -- "no events for N minutes" is ambiguous; "no heartbeat for
+N heartbeat-intervals" is not.
 """
 import asyncio
 import json
@@ -67,6 +80,13 @@ STREAM_MAX_AGE_SECONDS = int(os.environ.get("RELAY_STREAM_MAX_AGE_SECONDS", str(
 # default when max_bytes is set) long before hitting the hard account limit
 # -- a bounded, self-healing failure mode instead of a silent full stop.
 STREAM_MAX_BYTES = int(os.environ.get("RELAY_STREAM_MAX_BYTES", str(1_800_000_000)))
+
+HEARTBEAT_SUBJECT = os.environ.get("RELAY_HEARTBEAT_SUBJECT", "mind.relay.heartbeat")
+HEARTBEAT_INTERVAL_SECONDS = float(os.environ.get("RELAY_HEARTBEAT_INTERVAL_SECONDS", "5"))
+_relay_started_unix_ns = time.time_ns()
+_last_successful_publish_unix_ns: Optional[int] = None
+_consecutive_publish_failures = 0
+_total_publish_failures = 0
 
 
 import re
@@ -182,12 +202,47 @@ async def _handle_frame(js, event_id: Optional[str], event_type: Optional[str], 
     fields["mind_event_id"] = event_id
     body = json.dumps(fields).encode("utf-8")
 
+    global _last_successful_publish_unix_ns, _consecutive_publish_failures, _total_publish_failures
     for ticker in tickers:
         subject = f"{SUBJECT_PREFIX}.{event_type}.{ticker}"
         try:
             await js.publish(subject, body)
+            _last_successful_publish_unix_ns = time.time_ns()
+            _consecutive_publish_failures = 0
         except Exception:
-            logger.exception("nats: publish failed for subject=%s", subject)
+            _consecutive_publish_failures += 1
+            _total_publish_failures += 1
+            logger.exception(
+                "nats: publish failed for subject=%s (consecutive=%d total=%d)",
+                subject, _consecutive_publish_failures, _total_publish_failures,
+            )
+
+
+async def _heartbeat_forever(nc) -> None:
+    """Core-NATS publish, outside the MIND_EVENTS stream (no JetStream, no
+    storage cost, immune to that stream's own size ceiling) -- a consumer or
+    operator subscribes HEARTBEAT_SUBJECT directly to answer "is this relay
+    alive and actually delivering" without needing stream_info access or
+    asking a human. consecutive_publish_failures crossing 0 is the loud
+    signal a silent-discard outage like 2026-10-02's needed."""
+    while True:
+        now = time.time_ns()
+        payload = {
+            "relay_started_unix_ns": _relay_started_unix_ns,
+            "now_unix_ns": now,
+            "last_successful_publish_unix_ns": _last_successful_publish_unix_ns,
+            "seconds_since_last_publish": (
+                (now - _last_successful_publish_unix_ns) / 1e9
+                if _last_successful_publish_unix_ns is not None else None
+            ),
+            "consecutive_publish_failures": _consecutive_publish_failures,
+            "total_publish_failures": _total_publish_failures,
+        }
+        try:
+            await nc.publish(HEARTBEAT_SUBJECT, json.dumps(payload).encode("utf-8"))
+        except Exception:
+            logger.exception("relay: heartbeat publish failed")
+        await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
 
 
 async def _sse_forever(js) -> None:
@@ -223,7 +278,12 @@ async def main() -> None:
     js = nc.jetstream()
     await _ensure_stream(js)
     logger.info("relay: starting, publishing to %s.> on %s", SUBJECT_PREFIX, NATS_URL)
-    await _sse_forever(js)
+    logger.info("relay: heartbeat on %s every %ss", HEARTBEAT_SUBJECT, HEARTBEAT_INTERVAL_SECONDS)
+    heartbeat_task = asyncio.create_task(_heartbeat_forever(nc))
+    try:
+        await _sse_forever(js)
+    finally:
+        heartbeat_task.cancel()
 
 
 if __name__ == "__main__":
