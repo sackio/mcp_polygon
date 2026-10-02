@@ -41,7 +41,7 @@ from typing import List, Optional, Tuple
 
 import httpx
 import nats
-from nats.js.api import StreamConfig, RetentionPolicy, StorageType
+from nats.js.api import StreamConfig, RetentionPolicy, StorageType, DiscardPolicy
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("mind_relay")
@@ -52,6 +52,21 @@ STREAM_NAME = "MIND_EVENTS"
 SUBJECT_PREFIX = "mind.events"
 MAX_STALENESS_HOURS = float(os.environ.get("RELAY_MAX_STALENESS_HOURS", "24"))
 STREAM_MAX_AGE_SECONDS = int(os.environ.get("RELAY_STREAM_MAX_AGE_SECONDS", str(7 * 24 * 3600)))
+# 2026-10-02: the stream had ONLY an age-based retention (max_age above), no
+# size-based one -- a new, much higher-volume event type ("signal", not in
+# the original news/filing/analyst taxonomy this relay was sized for) filled
+# the broker's 2GiB max_file_store (nats.conf) in ~2.3 days, well inside the
+# 7-day age window, so nothing aged out and every publish started failing
+# with ServiceUnavailableError/insufficient resources (err_code=10023) --
+# silently, since the relay logs+swallows publish failures per-message and
+# nothing was polling stream health. Found live 2026-10-02: last successful
+# write 2026-10-01T21:55:33Z, ~17.5h of real mind events never reached the
+# 28 durable consumers (events-book-*) already subscribed here. Fixing by
+# giving the STREAM its own size ceiling, safely under the broker's physical
+# one, so JetStream auto-trims oldest messages (DiscardPolicy.OLD, the
+# default when max_bytes is set) long before hitting the hard account limit
+# -- a bounded, self-healing failure mode instead of a silent full stop.
+STREAM_MAX_BYTES = int(os.environ.get("RELAY_STREAM_MAX_BYTES", str(1_800_000_000)))
 
 
 import re
@@ -86,21 +101,37 @@ def _parse_sse_frame(lines: List[str]) -> Tuple[Optional[str], Optional[str], Op
     return event_id, event_type, data
 
 
+def _desired_stream_config() -> StreamConfig:
+    return StreamConfig(
+        name=STREAM_NAME,
+        subjects=[f"{SUBJECT_PREFIX}.>"],
+        retention=RetentionPolicy.LIMITS,
+        max_age=float(STREAM_MAX_AGE_SECONDS),  # nats-py StreamConfig.max_age is SECONDS, not ns
+        max_bytes=STREAM_MAX_BYTES,
+        discard=DiscardPolicy.OLD,
+        storage=StorageType.FILE,
+    )
+
+
 async def _ensure_stream(js) -> None:
     try:
-        await js.stream_info(STREAM_NAME)
-        logger.info("nats: stream %s already exists", STREAM_NAME)
-    except Exception:
-        await js.add_stream(
-            StreamConfig(
-                name=STREAM_NAME,
-                subjects=[f"{SUBJECT_PREFIX}.>"],
-                retention=RetentionPolicy.LIMITS,
-                max_age=float(STREAM_MAX_AGE_SECONDS),  # nats-py StreamConfig.max_age is SECONDS, not ns
-                storage=StorageType.FILE,
+        info = await js.stream_info(STREAM_NAME)
+        if info.config.max_bytes != STREAM_MAX_BYTES:
+            logger.info(
+                "nats: stream %s exists with max_bytes=%s, updating to %s",
+                STREAM_NAME, info.config.max_bytes, STREAM_MAX_BYTES,
             )
+            await js.update_stream(_desired_stream_config())
+        else:
+            logger.info("nats: stream %s already exists (max_bytes=%s)", STREAM_NAME, STREAM_MAX_BYTES)
+    except Exception as e:
+        if "stream not found" not in str(e).lower() and "not found" not in str(e).lower():
+            logger.warning("nats: stream_info failed (will attempt create): %s", e)
+        await js.add_stream(_desired_stream_config())
+        logger.info(
+            "nats: created stream %s (max_age=%ds, max_bytes=%s)",
+            STREAM_NAME, STREAM_MAX_AGE_SECONDS, STREAM_MAX_BYTES,
         )
-        logger.info("nats: created stream %s (max_age=%ds)", STREAM_NAME, STREAM_MAX_AGE_SECONDS)
 
 
 async def _handle_frame(js, event_id: Optional[str], event_type: Optional[str], data: Optional[str]) -> None:
