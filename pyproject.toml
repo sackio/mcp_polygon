@@ -23,6 +23,9 @@ dependencies = [
     # schedules with open/close times (including early closes). vectorbtpro's
     # own utils/sessions.py already requires it; we wrap it for get_trading_sessions.
     "pandas-market-calendars>=4.0.0",
+    # Factor models (Fama-French, AQR, q, ...): OUR fork of getfactormodels, pinned to a COMMIT
+    # (carries 3 fixes the PyPI 0.0.27 pre-alpha lacks). Tarball URL because the container has no git.
+    "getfactormodels @ https://github.com/sackio/getfactormodels/archive/c3fe939.tar.gz",
     "nats-py>=2.16.0",
     "msgpack>=1.2.2",
     # restricted expression evaluator for the generalized live-trigger API
@@ -37,6 +40,10 @@ email = "support@massive.com"
 [build-system]
 requires = [ "hatchling",]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# getfactormodels is pinned by URL (commit tarball): hatchling refuses direct references otherwise
+allow-direct-references = true
 
 [dependency-groups]
 dev = [

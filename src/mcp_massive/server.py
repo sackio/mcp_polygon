@@ -2503,6 +2503,122 @@ async def read_raw_rows(
         return {"error": str(e)}
 
 
+# Published asset-pricing factor models (our getfactormodels fork), fetched from the sources
+from . import factors
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_factor_models() -> Dict[str, Any]:
+    """
+    List the asset-pricing factor models available via get_factor_model (Fama-French
+    3/4/5/6, q-factors, AQR HML-Devil/QMJ/BAB/VME/6-factor, mispricing, liquidity,
+    DHS, ICR, Barillas-Shanken, ...): key, name, aliases. Data comes from the model
+    authors' sites, not Massive. Data currency differs per model: check last_date.
+    """
+    try:
+        return factors.list_factor_models()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def get_factor_model(
+    model: str = "ff3",
+    region: str = "usa",
+    frequency: str = "m",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: int = 1000,
+    tail: bool = False,
+) -> Dict[str, Any]:
+    """
+    Factor returns for one model (key or alias from list_factor_models), frequency
+    d/w/m/y, optional start_date/end_date (YYYY[-MM-DD]). Returns rows plus first_date,
+    last_date and total_rows; capped at `limit` (max 5000) from the head, or the tail
+    when tail=true. last_date matters: a model that ends years ago joins silently to
+    recent returns and drops the unmatched rows.
+    """
+    try:
+        return factors.get_factor_model(
+            model, region, frequency, start_date, end_date, limit, tail
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# Quantum-data's published feature corpus (BARS + LABELS) — read-only
+from . import features
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_feature_corpus() -> Dict[str, Any]:
+    """
+    List quantum-data's published feature corpus (bars + forward-return labels,
+    2026-07-02 onward): lanes, day coverage, spec counts, shard layout. Indicator,
+    mask and state surface files are NOT served yet (backfill running) — see the
+    massive-features skill. Historical counterpart of the live NATS feature stream.
+    """
+    try:
+        return features.list_feature_corpus()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def list_feature_specs(
+    lane: str = "st", contains: Optional[str] = None, limit: int = 200
+) -> Dict[str, Any]:
+    """
+    List bar spec_ids in the feature corpus. lane 'st' = single-ticker (988 specs,
+    every ticker), 'mt' = multi-ticker/index (128 specs, 25-name roster). Optional
+    substring filter. Spec semantics/params belong to quantum-engine.
+    """
+    try:
+        return features.list_feature_specs(lane, contains, limit)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def resolve_feature_file(
+    kind: str, lane: str, day: str, ticker: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Resolve one feature-corpus file and its parquet metadata. kind 'bars' (lane
+    'st'|'mt') or 'labels' (lane 'st_h3'|'st_ref'|'mt'); day YYYY-MM-DD. Lane 'st'
+    and ST labels are unmerged shards: ticker is required and the shard is computed
+    (name_shard FNV-1a, 30 shards), never found by listing directories.
+    """
+    try:
+        return features.resolve_feature_file(kind, lane, day, ticker)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+async def read_feature_rows(
+    kind: str,
+    lane: str,
+    day: str,
+    ticker: str,
+    spec_id: Optional[str] = None,
+    columns: Optional[List[str]] = None,
+    limit: int = 1000,
+) -> Dict[str, Any]:
+    """
+    Read one ticker's rows (optionally one spec_id) for one day from the feature
+    corpus, with column projection, capped at 20,000 rows. Row groups are not
+    sorted by spec/symbol, so a read scans key columns (seconds to ~15 s; a broad
+    scan is aborted at 120 s). Labels join to bars on (spec_id, symbol, emit_seq),
+    never timestamps. Bars carry no RTH filter. Use resolve_feature_file for the
+    column list.
+    """
+    try:
+        return features.read_feature_rows(kind, lane, day, ticker, spec_id, columns, limit)
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Quantum-data's reference-data MongoDB — read-only, whitelisted collections only
 from . import refdata
 

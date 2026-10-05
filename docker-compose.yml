@@ -18,6 +18,10 @@ services:
       # NFS-mounted on server4 (this container's host) at this path — server4-
       # specific, not the same path another host would use for the same export.
       - /mnt/server5/zpolygon:/mnt/server5/zpolygon:ro
+      # Read-only: quantum-data's published feature corpus (bars + labels), on
+      # server5's local ZFS, NFS-mounted on server4 at this path (verified
+      # 2026-10-04: /mnt/server5 = server5:/mnt/store). Used by features.py.
+      - /mnt/server5/zquantum/qf-data:/mnt/server5/zquantum/qf-data:ro
     container_name: mcp_polygon_server
     network_mode: host
     # 2026-09-28: mcp_polygon_server leaked to 59.9GB and took server4 down
