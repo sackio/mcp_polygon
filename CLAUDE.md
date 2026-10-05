@@ -121,7 +121,7 @@ read-only (find/count only) and rejects server-side-JS filter operators
 ## Factor models + calendars — served by this MCP, added 2026-10-05
 
 `list_factor_models` / `get_factor_model` (our `sackio/getfactormodels` fork, pinned to commit
-`c3fe939` by tarball URL in `pyproject.toml`; checkout `/mnt/nas/data/code/forks/getfactormodels`,
+`b9675ab` by tarball URL in `pyproject.toml`; checkout `/mnt/nas/data/code/forks/getfactormodels`,
 never force-push, tell `vbt` before bumping since its image pins the same commit) and the calendar
 tools (`get_market_holidays`, `list_trading_calendars`, `get_trading_sessions`). Skill:
 `massive-factors`. ⛔ Check each result's `last_date`: factor sets end in different years.

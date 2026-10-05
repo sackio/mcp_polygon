@@ -10,7 +10,7 @@ Both are served by the shared MCP (`http://server4:24400/mcp/v1`). Neither comes
 ## Factor models
 - `list_factor_models` → 18 keys (ff3 ff4 ff5 ff6 q qc hmld qmj bab vme aqr6 mis liq icr dhs bs hcapm pcapm) with aliases.
 - `get_factor_model(model, region='usa', frequency='m', start_date, end_date, limit=1000, tail=False)` → rows plus `first_date`, `last_date`, `total_rows`. Cap 5,000 rows per call; `tail=true` returns the newest rows.
-- Source: our fork `github.com/sackio/getfactormodels` (checkout `/mnt/nas/data/code/forks/getfactormodels`), pinned to commit `c3fe939` in `pyproject.toml` by tarball URL (container has no git). Data is fetched LIVE from the authors' sites (Ken French, AQR, global-q.org); nothing is stored here.
+- Source: our fork `github.com/sackio/getfactormodels` (checkout `/mnt/nas/data/code/forks/getfactormodels`), pinned to commit `b9675ab` in `pyproject.toml` by tarball URL (container has no git). Data is fetched LIVE from the authors' sites (Ken French, AQR, global-q.org); nothing is stored here.
 - ⛔ **Data currency is per model and moves**: a factor set that ended years ago joins silently to recent returns and drops the unmatched rows. Always read `last_date` before a regression. (Measured at install: ff3 monthly to 2026-08; vbt's header in `scripts/requirements/factors.txt` lists per-model ends, e.g. Stambaugh-Yuan mispricing stops 2016-12.)
 - ⛔ Upstream is pre-alpha; the fork carries 3 fixes (int `model=`, string-dtype index, check_connection). Bump the pin deliberately and tell `vbt`, whose image pins the same commit. Never force-push the fork.
 - Returns are in decimal (0.0256 = 2.56%) as served; verify units per model before use.
