@@ -842,57 +842,40 @@ async def get_exchanges(
 async def list_stock_financials(
     ticker: Optional[str] = None,
     cik: Optional[str] = None,
-    company_name: Optional[str] = None,
-    company_name_search: Optional[str] = None,
-    sic: Optional[str] = None,
-    filing_date: Optional[Union[str, datetime, date]] = None,
-    filing_date_lt: Optional[Union[str, datetime, date]] = None,
-    filing_date_lte: Optional[Union[str, datetime, date]] = None,
-    filing_date_gt: Optional[Union[str, datetime, date]] = None,
-    filing_date_gte: Optional[Union[str, datetime, date]] = None,
-    period_of_report_date: Optional[Union[str, datetime, date]] = None,
-    period_of_report_date_lt: Optional[Union[str, datetime, date]] = None,
-    period_of_report_date_lte: Optional[Union[str, datetime, date]] = None,
-    period_of_report_date_gt: Optional[Union[str, datetime, date]] = None,
-    period_of_report_date_gte: Optional[Union[str, datetime, date]] = None,
+    statement: str = "all",
     timeframe: Optional[str] = None,
-    include_sources: Optional[bool] = None,
-    limit: Optional[int] = None,
+    fiscal_year: Optional[int] = None,
+    fiscal_quarter: Optional[int] = None,
+    period_end_gte: Optional[Union[str, datetime, date]] = None,
+    period_end_lte: Optional[Union[str, datetime, date]] = None,
+    filing_date_gte: Optional[Union[str, datetime, date]] = None,
+    filing_date_lte: Optional[Union[str, datetime, date]] = None,
+    limit: Optional[int] = 100,
     sort: Optional[str] = None,
-    order: Optional[str] = None,
-    params: Optional[Dict[str, Any]] = None,
+    period_of_report_date_gte: Optional[Union[str, datetime, date]] = None,
+    period_of_report_date_lte: Optional[Union[str, datetime, date]] = None,
 ) -> Dict[str, Any]:
     """
-    Get fundamental financial data for companies.
+    Company financial statements (income_statement, balance_sheet, cash_flow, or 'all') from
+    /stocks/financials/v1/* (XBRL-sourced, flat records; replaces the dead vX
+    /reference/financials, sunset 2026-10-09). Filter by ticker (comma list ok), cik,
+    timeframe (quarterly|annual|trailing_twelve_months), fiscal_year/quarter, period_end and
+    filing_date ranges. period_of_report_date_* are accepted as aliases of period_end_*.
+    NOTE filing_date is the LATEST filing that included the period (a restatement), not the
+    original filing date. History starts with XBRL (period_end ~2009-2011).
     """
     try:
-        results = polygon_client.vx.list_stock_financials(
-            ticker=ticker,
-            cik=cik,
-            company_name=company_name,
-            company_name_search=company_name_search,
-            sic=sic,
-            filing_date=filing_date,
-            filing_date_lt=filing_date_lt,
-            filing_date_lte=filing_date_lte,
-            filing_date_gt=filing_date_gt,
-            filing_date_gte=filing_date_gte,
-            period_of_report_date=period_of_report_date,
-            period_of_report_date_lt=period_of_report_date_lt,
-            period_of_report_date_lte=period_of_report_date_lte,
-            period_of_report_date_gt=period_of_report_date_gt,
-            period_of_report_date_gte=period_of_report_date_gte,
-            timeframe=timeframe,
-            include_sources=include_sources,
-            limit=limit,
-            sort=sort,
-            order=order,
-            params=params,
-            raw=True,
+        f = {
+            "period_end.gte": period_end_gte or period_of_report_date_gte,
+            "period_end.lte": period_end_lte or period_of_report_date_lte,
+            "filing_date.gte": filing_date_gte,
+            "filing_date.lte": filing_date_lte,
+        }
+        return await fundamentals.list_financials(
+            statement=statement, ticker=ticker, cik=cik, timeframe=timeframe,
+            fiscal_year=fiscal_year, fiscal_quarter=fiscal_quarter, filters=f,
+            limit=limit or 100, sort=sort,
         )
-
-        data_str = results.data.decode("utf-8")
-        return json.loads(data_str)
     except Exception as e:
         return {"error": str(e)}
 
@@ -2505,6 +2488,7 @@ async def read_raw_rows(
 
 # Published asset-pricing factor models (our getfactormodels fork), fetched from the sources
 from . import factors
+from . import fundamentals
 
 
 @poly_mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))

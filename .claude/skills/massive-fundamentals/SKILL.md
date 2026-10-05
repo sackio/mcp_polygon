@@ -5,36 +5,32 @@ description: Get company financial statements (balance sheet, income statement, 
 
 # massive-fundamentals
 
-`list_stock_financials(ticker, timeframe, filing_date/period_of_report_date filters, cik,
-company_name, sic, limit)` — SEC-filing-sourced financials, verified live against AAPL FY2025.
+`list_stock_financials(ticker, cik, statement='all', timeframe, fiscal_year, fiscal_quarter,
+period_end_gte/lte, filing_date_gte/lte, limit, sort)` wraps Massive's
+`/stocks/financials/v1/{income-statements,balance-sheets,cash-flow-statements}` (XBRL-sourced
+flat records). ⛔ It replaced the vX `/vX/reference/financials` endpoint, which returns **HTTP
+410** (sunset header 2026-10-09, successor = these endpoints). `statement` is `income_statement`,
+`balance_sheet`, `cash_flow` or `all` (returns the three under `statements`). `ticker` (comma list
+ok) is mapped to `tickers.any_of`; `period_of_report_date_gte/lte` are accepted as aliases of
+`period_end_gte/lte`. Direct REST works too via `call_api`.
 
-`timeframe`: `"annual"` or `"quarterly"`. Filter by `period_of_report_date` (the fiscal period
-covered) or `filing_date` (when it was actually filed with the SEC — these differ, sometimes
-by weeks) depending on which you actually mean.
+`timeframe`: `quarterly`, `annual`, `trailing_twelve_months`. Filters on the REST side:
+`tickers[.any_of|.all_of]`, `cik[.any_of|.gt...]`, `period_end[.gte...]`, `filing_date[.gte...]`,
+`fiscal_year`, `fiscal_quarter`, `timeframe`, `sort` (`period_end.desc`), `limit` (max 50,000).
 
-## Response shape
+## Response shape (flat, one record per period)
 
-Each result has `financials` split into four sections, each a dict of `{field_name: {value,
-unit, label, order}}`:
-
-- `income_statement` — `revenues`, `cost_of_revenue`, `gross_profit`, `operating_expenses`,
-  `operating_income_loss`, `net_income_loss`, `basic_earnings_per_share`,
-  `diluted_earnings_per_share`, `research_and_development`,
-  `selling_general_and_administrative_expenses`, etc.
-- `balance_sheet` — `assets`, `current_assets`, `noncurrent_assets`, `liabilities`,
-  `current_liabilities`, `noncurrent_liabilities`, `equity`, `long_term_debt`, `inventory`,
-  `accounts_payable`, etc.
-- `cash_flow_statement` — `net_cash_flow_from_operating_activities`,
-  `net_cash_flow_from_investing_activities`, `net_cash_flow_from_financing_activities`,
-  `net_cash_flow`, and `_continuing` variants.
-- `comprehensive_income` — `comprehensive_income_loss` and its components.
-
-Field presence varies by company/filing (not every company reports every field) — don't
-assume a fixed schema, check what's actually in the response for the ticker you're working
-with. `order` gives the field's canonical display order if you're building a statement view.
-
-`source_filing_url`/`source_filing_file_url` link back to the actual SEC filing (XBRL) this
-was extracted from, if you need to verify or go deeper than the structured fields.
+Identity: `tickers` (array), `cik` (10-digit string), `period_end`, `filing_date`, `fiscal_year`,
+`fiscal_quarter`, `timeframe`. Income statement: `revenue`, `cost_of_revenue`, `gross_profit`,
+`selling_general_and_administrative`, `research_development`, `operating_income`,
+`income_before_income_taxes`, `income_taxes`, `consolidated_net_income_loss`,
+`net_income_loss_attributable_common_shareholders`, `basic/diluted_earnings_per_share`,
+`basic/diluted_shares_outstanding`, `ebitda`, ... Balance sheet and cash flow carry their own
+fields (e.g. CFO is `net_cash_from_operating_activities`). Field presence varies by company
+(e.g. `debt_current` null on ~1/3 of filers; banks' `operating_income` is pre-tax-like): check
+what the response holds. Old nested `financials.{income_statement,...}` shape and `end_date`,
+`period_of_report_date`, `acceptance_datetime`, `source_filing_url` no longer exist: the
+stand-ins are `period_end` (period) and `filing_date` (below).
 
 ## Not built for computed ratios
 
@@ -46,7 +42,7 @@ reach it via `call_api` if needed, but treat it as unverified until someone chec
 
 ## History floor is ~2009-2011, and it's structural (XBRL), not a plan/coverage gap
 
-⛔ **Confirmed 2026-09-05**: `list_stock_financials` has no annual data before fiscal_year 2009
+⛔ **Confirmed 2026-09-05**: the financials data has no annual data before fiscal_year 2009
 for AAPL (earliest `end_date` 2009-09-26, 17 total annual records through FY2025, no gaps) or
 before FY2011 for GE (earliest `end_date` 2011-12-31, 15 total annual records) — both companies
 have traded for decades longer than that. tradedesk independently pulled Massive's newer
@@ -76,11 +72,7 @@ some earlier work used as a workaround (see memo `30c4d4d8`) — prefer the fili
 ## `ticker=` (singular) is silently ignored on the newer financials REST endpoints
 
 ⛔ **Measured 2026-09-05 (tradedesk, direct REST)**: on `/stocks/financials/v1/*`,
-`ticker=AAPL` (singular) is accepted with no error but silently ignored, returning an
+`ticker=AAPL` (singular) is accepted with no error but silently ignored (the MCP tool maps it for you), returning an
 arbitrary multi-ticker universe instead of just AAPL. The working filter is
 `tickers.any_of=AAPL`. Every other documented filter (`period_end.gte`, `fiscal_year`, `sort`)
-worked as expected — only the parameter name is the trap. This applies to hand-built
-`call_api` requests against these specific endpoints; `list_stock_financials`'s own `ticker`
-parameter has not been separately verified to map correctly (that tool wraps a related but
-differently-shaped legacy endpoint — see field names above vs. `period_end`/CIK-count scale
-tradedesk saw directly), so don't assume the wrapper is exempt without checking.
+worked as expected — only the parameter name is the trap. `list_stock_financials` maps `ticker` to `tickers.any_of` for you (verified 2026-10-05: AAPL in, AAPL rows out).

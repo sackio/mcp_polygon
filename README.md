@@ -131,7 +131,7 @@ This MCP server implements all Polygon.io API endpoints as tools, including:
 - `list_ticker_news` - Recent news articles for tickers
 - `get_snapshot_ticker` - Current market snapshot for a ticker
 - `get_market_status` - Current market status and trading hours
-- `list_stock_financials` - Fundamental financial data
+- `list_stock_financials` - Financial statements (income/balance/cash flow) via /stocks/financials/v1
 - And many more...
 
 Each tool follows the Polygon.io SDK parameter structure while converting responses to standard JSON that LLMs can easily process.
