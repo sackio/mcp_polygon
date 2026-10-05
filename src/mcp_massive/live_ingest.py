@@ -877,8 +877,10 @@ async def _on_bar(msg) -> None:
     while len(_state.bars) > MAX_TRACKED_KEYS:
         evicted_key, _ = _state.bars.popitem(last=False)
         _state.history.pop(evicted_key, None)
-    await _evaluate_threshold_alerts(key, entry)
-    await _evaluate_trigger_alerts("quantum_bar", ticker, None, entry)
+    if key in _threshold_index:
+        await _evaluate_threshold_alerts(key, entry)
+    if ("quantum_bar", ticker) in _trigger_index:
+        await _evaluate_trigger_alerts("quantum_bar", ticker, None, entry)
 
 
 def _tape_fields(payload: dict) -> Dict[str, Any]:
@@ -916,6 +918,11 @@ async def _on_event(msg) -> None:
     if len(parts) != 5:
         return
     _, market, _, source_token, ticker = parts
+    # 2026-10-05: this process is one pegged Python core and the broker was cutting it as a slow
+    # consumer 1-10x/min. Events are only consumed by trigger alerts, so skip the msgpack decode
+    # (the dominant per-message cost) unless some trigger watches this (source, ticker).
+    if (f"quantum_{source_token}", ticker) not in _trigger_index:
+        return
     try:
         payload = msgpack.unpackb(msg.data, raw=False)
     except Exception as e:
@@ -1031,15 +1038,90 @@ _SLOW_CONSUMER_LOG_INTERVAL_SECONDS = 60.0
 _slow_consumer_last_logged: Dict[str, float] = {}
 
 
+_event_subs: Dict[str, Any] = {}
+
+
+async def _subscribe_events(nc, want, have) -> Dict[str, Any]:
+    out = {}
+    for w in want - have:
+        out[w] = await nc.subscribe(
+            f"market.*.event.{w}", cb=_on_event,
+            pending_msgs_limit=_SUB_PENDING_MSGS_LIMIT, pending_bytes_limit=_SUB_PENDING_BYTES_LIMIT,
+        )
+    return out
+
+
+async def _sync_event_subs(nc) -> None:
+    """Keep per-(source, ticker) event subscriptions equal to what trigger alerts watch."""
+    want = {"quote.SPY", "tape.BTC-USD"}
+    for (source, ticker) in list(_trigger_index.keys()):
+        if source in ("quantum_trade", "quantum_quote", "quantum_tape"):
+            want.add(f"{source[len('quantum_'):]}.{ticker}")
+    have = set(_event_subs)
+    _event_subs.update(await _subscribe_events(nc, want, have))
+    for w in have - want:
+        sub = _event_subs.pop(w, None)
+        if sub is not None:
+            try:
+                await sub.unsubscribe()
+            except Exception:
+                pass
+
+
+_bar_subs: Dict[Tuple[str, str], Any] = {}
+_bar_requests: Dict[Tuple[str, str], float] = {}
+_BAR_REQUEST_TTL_S = 1800.0
+_MAX_BAR_SUBS = 4000
+
+
+def _request_bar(spec_id: str, ticker: str) -> None:
+    if len(_bar_requests) < 20000 or (spec_id, ticker) in _bar_requests:
+        _bar_requests[(spec_id, ticker)] = time.monotonic()
+
+
+async def _sync_bar_subs(nc) -> None:
+    """Per-(spec_id, ticker) bar subscriptions = alert targets + recently requested keys."""
+    now = time.monotonic()
+    for k in [k for k, t in _bar_requests.items() if now - t > _BAR_REQUEST_TTL_S]:
+        _bar_requests.pop(k, None)
+    want = set(_threshold_index.keys()) | set(_bar_requests.keys())
+    for recs in _trigger_index.values():
+        for rec in recs:
+            c = rec["condition"]
+            if c.get("source") == "quantum_bar" and c.get("spec_id"):
+                for t in c.get("tickers", []):
+                    want.add((c["spec_id"], t))
+    if len(want) > _MAX_BAR_SUBS:
+        logger.warning("live_ingest: %d bar subscriptions wanted, capping at %d", len(want), _MAX_BAR_SUBS)
+        want = set(sorted(want)[:_MAX_BAR_SUBS])
+    for key in want - set(_bar_subs):
+        spec_id, ticker = key
+        _bar_subs[key] = await nc.subscribe(
+            f"market.*.bar.{spec_id}.{ticker}", cb=_on_bar,
+            pending_msgs_limit=_SUB_PENDING_MSGS_LIMIT, pending_bytes_limit=_SUB_PENDING_BYTES_LIMIT,
+        )
+    for key in set(_bar_subs) - want:
+        sub = _bar_subs.pop(key, None)
+        if sub is not None:
+            try:
+                await sub.unsubscribe()
+            except Exception:
+                pass
+
+
 async def _subscribe_all(nc: "nats.aio.client.Client") -> None:
-    await nc.subscribe(
-        "market.*.bar.>", cb=_on_bar,
-        pending_msgs_limit=_SUB_PENDING_MSGS_LIMIT, pending_bytes_limit=_SUB_PENDING_BYTES_LIMIT,
-    )
-    await nc.subscribe(
-        "market.*.event.>", cb=_on_event,
-        pending_msgs_limit=_SUB_PENDING_MSGS_LIMIT, pending_bytes_limit=_SUB_PENDING_BYTES_LIMIT,
-    )
+    # 2026-10-05: bars are no longer a `market.*.bar.>` firehose. Measured: the engine publishes
+    # ~60k+ bar msgs/s in RTH and nats-py alone costs a full core at that rate (a bare counting
+    # callback hit 100% CPU at 58k msgs/s), so this single-process reader was cut by the broker as
+    # a slow consumer 1-10x/min. Bars are subscribed per (spec_id, ticker) that an alert watches or
+    # a tool asked for in the last _BAR_REQUEST_TTL_S (see _sync_bar_subs / _request_bar).
+    _bar_subs.clear()
+    # 2026-10-05: the old `market.*.event.>` firehose (~7k msgs/s) pinned this process's one core and
+    # the broker cut it as a slow consumer 1-10x/min. Events feed only trigger alerts, so they are now
+    # subscribed per (source, ticker) that some alert watches (see _sync_event_subs), plus two canaries
+    # so the event_count / last_event_unix_ns liveness fields keep moving.
+    _event_subs.clear()
+    _event_subs.update(await _subscribe_events(nc, {"quote.SPY", "tape.BTC-USD"}, set()))
     await nc.subscribe(
         "market.meta.engine.>", cb=_on_meta,
         pending_msgs_limit=_SUB_PENDING_MSGS_LIMIT, pending_bytes_limit=_SUB_PENDING_BYTES_LIMIT,
@@ -1096,7 +1178,13 @@ async def run_forever() -> None:
             await _subscribe_all(nc)
             logger.info("live_ingest: connected to %s", NATS_URL)
             while nc.is_connected or nc.is_reconnecting:
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
+                if nc.is_connected:
+                    try:
+                        await _sync_event_subs(nc)
+                        await _sync_bar_subs(nc)
+                    except Exception:
+                        logger.exception("live_ingest: event subscription sync failed")
             logger.warning("live_ingest: connection loop exited (closed), reconnecting from scratch")
         except Exception:
             logger.exception("live_ingest: connection attempt failed, retrying in 5s")
@@ -1116,8 +1204,12 @@ async def evaluate_trigger(source: str, ticker: str, event_type: Optional[str], 
 
 def get_bar(spec_id: str, ticker: str) -> Dict[str, Any]:
     entry = _state.bars.get((spec_id, ticker))
+    _request_bar(spec_id, ticker)
     if entry is None:
-        return {"found": False, "spec_id": spec_id, "ticker": ticker}
+        return {"found": False, "spec_id": spec_id, "ticker": ticker,
+                "subscribed": True,
+                "note": "live bars are subscribed on demand: this key is now being listened to "
+                        "(for ~30 min after the last request). Retry after one bar interval of the spec."}
     now_ns = time.time_ns()
     return {
         "found": True,
@@ -1130,8 +1222,11 @@ def get_bar(spec_id: str, ticker: str) -> Dict[str, Any]:
 
 def get_history(spec_id: str, ticker: str, limit: int = 100) -> Dict[str, Any]:
     hist = _state.history.get((spec_id, ticker))
+    _request_bar(spec_id, ticker)
     if not hist:
-        return {"found": False, "spec_id": spec_id, "ticker": ticker, "bars": []}
+        return {"found": False, "spec_id": spec_id, "ticker": ticker, "bars": [], "subscribed": True,
+                "note": "live bars are subscribed on demand: this key is now being listened to; history "
+                        "accumulates from now (in-memory only), retry after a few bar intervals."}
     limit = max(1, min(limit, HISTORY_LIMIT))
     bars = list(hist)[-limit:]
     return {"found": True, "spec_id": spec_id, "ticker": ticker, "count": len(bars), "bars": bars}
