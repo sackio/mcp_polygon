@@ -88,8 +88,9 @@ with quantum-data before changing scope, per "you own the supply, not the consum
   benzinga year-first exception (`benzinga_news_v1/YYYY/MM/YYYY-MM-DD.parquet`, no
   `lane` segment) that every other cluster doesn't have. This is the *only* way to
   reach the 4 lanes with no sorted/pivot counterpart (`us_options_opra`
-  day_aggs_v1/minute_aggs_v1/trades_v1, `us_indices` day_aggs_v1 — all stopped
-  2026-06-02, reverified on-disk 2026-08-27). ⚠️ **Lane names carry the `_v1`
+  day_aggs_v1/minute_aggs_v1/trades_v1 — paused from 2026-06-02, then RESUMED by
+  quantum-data, so check the newest file with `ls` instead of trusting a date here;
+  `us_indices` day_aggs_v1 — retired, last file 2026-06-02). ⚠️ **Lane names carry the `_v1`
   suffix** — `resolve_raw_path(cluster="us_options_opra", lane="day_aggs")`
   (no suffix) returns `exists:false` even though the data is there; this
   false negative burned a caller on 2026-08-27 before being caught. RAW
@@ -116,6 +117,16 @@ in this repo's `.env`, from k8s secret `mongodb-credentials` in namespace
 `quantum-feed`) is **not** database-scoped read-only — refdata.py is what enforces
 read-only (find/count only) and rejects server-side-JS filter operators
 (`$where`/`$function`/`$accumulator`/`$expr`).
+
+## Factor models + calendars — served by this MCP, added 2026-10-05
+
+`list_factor_models` / `get_factor_model` (our `sackio/getfactormodels` fork, pinned to commit
+`c3fe939` by tarball URL in `pyproject.toml`; checkout `/mnt/nas/data/code/forks/getfactormodels`,
+never force-push, tell `vbt` before bumping since its image pins the same commit) and the calendar
+tools (`get_market_holidays`, `list_trading_calendars`, `get_trading_sessions`). Skill:
+`massive-factors`. ⛔ Check each result's `last_date`: factor sets end in different years.
+
+---
 
 ## What you own
 
@@ -221,7 +232,7 @@ Verified live post-rebuild: `get_market_status`, `list_flatfile_asset_classes`, 
 | Vendor account, compliance history, 403 triage | `memo_get(id="13bf0387-b2c2-4059-a39e-d5b25c782e4b")` |
 | Compliance contact + resolution template | `memo_get(id="69e558b2-8f9c-4048-a01a-e56104bddd62")` |
 | Alternatives priced (Alpaca/Databento) + cost analysis | `memo_get(id="7b12625f-cda3-4da2-b828-66f8291a6686")` |
-| What data exists and how far back | `memo_get(id="fb005fb8-e9c1-4b3a-99f3-a9a022169759")` |
+| What data exists and how far back | `memo_get(id="b7c86725-b231-4e00-9d4e-6a71cf9f942c")` (was `fb005fb8`, confirmed dead 2026-09-21) |
 | REST usage + the DNS/NAT hazard | `/mnt/nas/data/code/tradedesk/.claude/skills/polygon/SKILL.md` |
 
 ⛔ **Those memos are April–June 2026 and the fleet has been wrong three times by trusting a
