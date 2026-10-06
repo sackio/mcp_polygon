@@ -17,7 +17,7 @@ else:
     # Fallback to current directory
     sys.path.insert(0, current_dir)
 
-from mcp_massive import server, live_ingest, mind_ingest
+from mcp_massive import server, live_ingest, mind_ingest, earnings_today
 
 
 async def _main() -> None:
@@ -30,6 +30,7 @@ async def _main() -> None:
     # live_ingest.py.
     asyncio.create_task(live_ingest.run_forever())
     asyncio.create_task(mind_ingest.run_forever())
+    asyncio.create_task(earnings_today.run_forever())
 
     app = server.get_asgi_app("streamable-http")
     config = uvicorn.Config(app, host="0.0.0.0", port=24400)
